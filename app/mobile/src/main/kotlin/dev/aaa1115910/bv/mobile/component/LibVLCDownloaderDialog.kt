@@ -40,7 +40,21 @@ fun LibVLCDownloaderDialog(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var processing by remember { mutableStateOf(false) }
-    var text by remember { mutableStateOf("等待操作中...") }
+    val upgradingStable = remember(version) {
+        version == VlcNativeLibs.defaultVersion &&
+            VlcLibsInstaller.getInstalledVersion(context) == VlcNativeLibs.previousStableVersion
+    }
+    var text by remember(version) {
+        mutableStateOf(
+            if (upgradingStable) {
+                "当前已安装 LibVLC ${VlcNativeLibs.previousStableVersion}，可升级到 $version。\n\n" +
+                    "下载约 90 MB，建议在 Wi-Fi 环境下升级。下载完成后切换到新版；" +
+                    "若已加载旧版组件，需要重启应用。\n\n选择“稍后”可继续使用当前版本，也可在播放器设置中升级。"
+            } else {
+                "等待操作中..."
+            }
+        )
+    }
     // 组件已装好，但本进程已加载了更旧的 C++ 运行库（来自 MPV 组件）或另一版本的 LibVLC，必须重启进程
     var restartRequired by remember { mutableStateOf(false) }
 
@@ -93,7 +107,7 @@ fun LibVLCDownloaderDialog(
             onDismissRequest = {
                 if (restartRequired) onDownloadComplete() else if (!processing) onDismissRequest()
             },
-            title = { Text(text = "LibVLC 下载器 (v$version)") },
+            title = { Text(text = if (upgradingStable) "升级 LibVLC 到 $version" else "LibVLC 下载器 (v$version)") },
             text = { Text(text = text) },
             confirmButton = {
                 if (restartRequired) {
@@ -111,7 +125,7 @@ fun LibVLCDownloaderDialog(
                         onClick = { startInstall() },
                         enabled = !processing
                     ) {
-                        Text(text = "下载")
+                        Text(text = if (upgradingStable) "升级并切换" else "下载")
                     }
                 }
             },
@@ -125,7 +139,7 @@ fun LibVLCDownloaderDialog(
                         onClick = { onDismissRequest() },
                         enabled = !processing
                     ) {
-                        Text(text = "取消")
+                        Text(text = if (upgradingStable) "稍后" else "取消")
                     }
                 }
             }

@@ -42,13 +42,13 @@ object AppConfiguration {
      * for the on-demand VLC libraries. The Java layer in `:player:libvlcjni` supports both this and
      * [libVLC4Version]; bumping either requires re-checking the JNI surface (see player/libvlcjni/README.md).
      */
-    const val libVLCVersion = "3.7.5"
+    const val libVLCVersion = "3.7.6"
 
     /**
      * SHA-256 of the `libvlc-all-$libVLCVersion.aar`. Cross-checked against Maven Central's `.sha1`
-     * sidecar (9ba36b9af5774ba56e691fa3c92efbad801eb51e). Update together with [libVLCVersion].
+     * sidecar (26df7f40fa44c6eccdff9a85339856d60b0919d3). Update together with [libVLCVersion].
      */
-    const val libVLCAarSha256 = "2c25507adb1260aa4d81aad8c2ce98765d98026b9381f49ea454d0b8092f21cb"
+    const val libVLCAarSha256 = "6b438ab75eb3b307d9699f4594c043f46b0a9a697521bd03729c02c0a400eb8a"
 
     /** VLC 4 preview line, selectable by the user in the TV player settings. */
     const val libVLC4Version = "4.0.0-eap29"

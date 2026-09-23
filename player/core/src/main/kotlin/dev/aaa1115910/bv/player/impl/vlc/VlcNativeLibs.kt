@@ -35,14 +35,26 @@ object VlcNativeLibs {
     val vlc4Version: String
         get() = BuildConfig.libVLC4Version
 
+    /** Already-installed VLC 3 build that remains usable until the user accepts the upgrade. */
+    const val previousStableVersion = "3.7.5"
+
     /**
-     * Every `libvlc-all` version the Java layer in `:player:libvlcjni` can drive. Anything else
-     * (including the "latest" a mirror might hand out) is refused by [load].
+     * Versions offered for download. The previous stable build is accepted only for existing installs.
      */
     val supportedVersions: List<String>
         get() = listOf(defaultVersion, vlc4Version)
 
     fun isSupportedVersion(version: String?): Boolean = version != null && version in supportedVersions
+
+    internal fun isLoadableVersion(version: String?): Boolean =
+        version == null || version == previousStableVersion || isSupportedVersion(version)
+
+    fun shouldOfferStableUpgrade(
+        installedVersion: String?,
+        selectedVersion: String,
+        usingVlc: Boolean,
+    ): Boolean = usingVlc && installedVersion == previousStableVersion &&
+        (selectedVersion == defaultVersion || selectedVersion == previousStableVersion)
 
     /** SHA-256 of the `libvlc-all` AAR for a supported [version], or null for unknown versions. */
     fun aarSha256(version: String): String? = when (version) {
@@ -101,13 +113,12 @@ object VlcNativeLibs {
     /**
      * Whether the installed libraries can be used by this build. A missing version file is
      * accepted (legacy 3.6.x installs only recorded the version in preferences and share the VLC 3
-     * JNI surface); a version outside [supportedVersions] is not.
+     * JNI surface). The previous stable build is also accepted while its upgrade is pending.
      */
     fun isInstalledVersionUsable(context: Context): Boolean {
         val libsDir = libsDir(context)
         if (!hasCompatibleLibraries(libsDir)) return false
-        val installed = readInstalledVersion(libsDir) ?: return true
-        return isSupportedVersion(installed)
+        return isLoadableVersion(readInstalledVersion(libsDir))
     }
 
     /**
@@ -141,7 +152,7 @@ object VlcNativeLibs {
             val installedVersion = readInstalledVersion(libsDir)
 
             when {
-                downloadedReady && installedVersion != null && !isSupportedVersion(installedVersion) -> {
+                downloadedReady && !isLoadableVersion(installedVersion) -> {
                     throw UnsatisfiedLinkError(
                         "Installed VLC libraries ($installedVersion) are not supported by this build " +
                             "(${supportedVersions.joinToString()}); the component must be downloaded again"

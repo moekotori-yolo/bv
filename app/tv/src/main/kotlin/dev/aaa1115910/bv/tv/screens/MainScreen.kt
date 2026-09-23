@@ -32,6 +32,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.aaa1115910.bv.R
+import dev.aaa1115910.bv.component.rememberVlcUpgradePrompt
+import dev.aaa1115910.bv.entity.PlayerType
+import dev.aaa1115910.bv.player.impl.vlc.VlcNativeLibs
+import dev.aaa1115910.bv.tv.component.LibVLCDownloaderDialog
 import dev.aaa1115910.bv.tv.activities.settings.SettingsActivity
 import dev.aaa1115910.bv.tv.screens.main.DrawerContent
 import dev.aaa1115910.bv.tv.screens.main.DrawerItem
@@ -119,6 +123,25 @@ fun MainScreen(
     val settingsFocusRequester = remember { FocusRequester() }
     var pendingContentFocusItem by remember { mutableStateOf<DrawerItem?>(null) }
     var autoUpdateInfo by remember { mutableStateOf<AutoUpdateInfo?>(null) }
+    var showVlcUpgrade by rememberVlcUpgradePrompt(
+        usingVlc = Prefs.playerType == PlayerType.VLC,
+        selectedVersion = Prefs.vlcSelectedVersion,
+    )
+
+    if (showVlcUpgrade) {
+        LibVLCDownloaderDialog(
+            onDismissRequest = { showVlcUpgrade = false },
+            onDownloadComplete = {
+                Prefs.vlcSelectedVersion = VlcNativeLibs.defaultVersion
+                showVlcUpgrade = false
+                "LibVLC ${VlcNativeLibs.defaultVersion} 组件已安装".toast(context)
+            },
+            onDownloadFailed = { error ->
+                showVlcUpgrade = false
+                "升级失败，可在播放器设置中重试：$error".toast(context)
+            },
+        )
+    }
 
     fun requestDrawerFocus(item: DrawerItem): Boolean {
         return runCatching {

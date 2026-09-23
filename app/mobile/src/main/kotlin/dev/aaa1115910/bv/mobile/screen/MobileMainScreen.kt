@@ -94,6 +94,11 @@ import dev.aaa1115910.biliapi.repositories.UserRepository as BiliUserRepository
 import dev.aaa1115910.bv.mobile.activities.InboxActivity
 import dev.aaa1115910.bv.mobile.activities.SettingsActivity
 import dev.aaa1115910.bv.mobile.component.ImagePreviewerActions
+import dev.aaa1115910.bv.component.rememberVlcUpgradePrompt
+import dev.aaa1115910.bv.entity.PlayerType
+import dev.aaa1115910.bv.mobile.component.LibVLCDownloaderDialog
+import dev.aaa1115910.bv.mobile.settings.MobilePrefs
+import dev.aaa1115910.bv.player.impl.vlc.VlcNativeLibs
 import dev.aaa1115910.bv.mobile.component.update.MobileAutoUpdateDialog
 import dev.aaa1115910.bv.mobile.screen.home.DynamicScreen
 import dev.aaa1115910.bv.mobile.screen.home.HomeScreen
@@ -143,6 +148,10 @@ fun MobileMainScreen(
     var dynamicUnreadCount by remember { mutableStateOf(0) }
     var messageUnreadCount by remember { mutableStateOf(0) }
     var autoUpdateInfo by remember { mutableStateOf<AutoUpdateInfo?>(null) }
+    var showVlcUpgrade by rememberVlcUpgradePrompt(
+        usingVlc = MobilePrefs.playerType == PlayerType.VLC,
+        selectedVersion = MobilePrefs.vlcSelectedVersion,
+    )
     val lifecycleOwner = LocalLifecycleOwner.current
     val previewerState = rememberPreviewerState(
         verticalDragType = VerticalDragType.UpAndDown,
@@ -457,10 +466,25 @@ fun MobileMainScreen(
         }
     )
 
-    MobileAutoUpdateDialog(
-        updateInfo = autoUpdateInfo,
-        onDismiss = { autoUpdateInfo = null }
-    )
+    if (showVlcUpgrade) {
+        LibVLCDownloaderDialog(
+            onDismissRequest = { showVlcUpgrade = false },
+            onDownloadComplete = {
+                MobilePrefs.vlcSelectedVersion = VlcNativeLibs.defaultVersion
+                showVlcUpgrade = false
+                "LibVLC ${VlcNativeLibs.defaultVersion} 组件已安装".toast(context)
+            },
+            onDownloadFailed = { error ->
+                showVlcUpgrade = false
+                "升级失败，可在播放器设置中重试：$error".toast(context)
+            },
+        )
+    } else {
+        MobileAutoUpdateDialog(
+            updateInfo = autoUpdateInfo,
+            onDismiss = { autoUpdateInfo = null }
+        )
+    }
 }
 
 @Composable

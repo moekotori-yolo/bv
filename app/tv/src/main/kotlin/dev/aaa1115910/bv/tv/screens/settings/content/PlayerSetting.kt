@@ -31,6 +31,7 @@ import dev.aaa1115910.bv.player.entity.PlayerDefaultStartPosition
 import dev.aaa1115910.bv.player.entity.Resolution
 import dev.aaa1115910.bv.player.entity.VideoCodec
 import dev.aaa1115910.bv.tv.component.settings.SettingListItemWithDialog
+import dev.aaa1115910.bv.tv.component.settings.SettingListItem
 import dev.aaa1115910.bv.tv.component.settings.SettingSwitchListItem
 import dev.aaa1115910.bv.tv.component.settings.SettingNumberListItem
 import dev.aaa1115910.bv.tv.component.settings.SettingH265CodecPriorityListItem
@@ -90,8 +91,12 @@ fun PlayerSetting(
     var enableAudioPlaybackParams by remember { mutableStateOf(Prefs.enableAudioPlaybackParams) }
     var showVlcDownloadConfirmDialog by remember { mutableStateOf(false) }
     var showVlcDownloaderDialog by remember { mutableStateOf(false) }
-    // 用户选择的 libvlc-all 版本（VLC 3 稳定版 / VLC 4 预览版）；下载弹窗按它取包
+    // 已安装版本与下载目标分开记录；升级完成后再保存选择。
     var selectedVlcVersion by remember { mutableStateOf(Prefs.vlcSelectedVersion) }
+    var vlcDownloadVersion by remember { mutableStateOf(selectedVlcVersion) }
+    var installedVlcVersion by remember {
+        mutableStateOf(VlcLibsInstaller.getInstalledVersion(context))
+    }
     // 切换 VLC 版本后的下载不改变播放器内核选择，只替换组件
     var vlcDownloadForVersionSwitch by remember { mutableStateOf(false) }
     var selectedVlcVideoOutput by remember {
@@ -196,6 +201,7 @@ fun PlayerSetting(
                                 if (VlcLibsInstaller.needsUpdate(context, selectedVlcVersion)) {
                                     // 显示下载确认弹窗
                                     vlcDownloadForVersionSwitch = false
+                                    vlcDownloadVersion = selectedVlcVersion
                                     showVlcDownloadConfirmDialog = true
                                 } else {
                                     selectedPlayerType = newType
@@ -235,16 +241,29 @@ fun PlayerSetting(
                     getValueText = { item, _ -> item },
                     value = selectedVlcVersion,
                     onValueChange = { version ->
-                        if (version == selectedVlcVersion) return@SettingListItemWithDialog
                         selectedVlcVersion = version
                         Prefs.vlcSelectedVersion = version
                         // 已安装的是另一版本：立刻提示下载，避免下次进播放器时才发现组件不匹配
                         if (VlcLibsInstaller.needsUpdate(context, version)) {
                             vlcDownloadForVersionSwitch = true
+                            vlcDownloadVersion = version
                             showVlcDownloadConfirmDialog = true
                         }
                     }
                 )
+            }
+            if (installedVlcVersion == VlcNativeLibs.previousStableVersion) {
+                item {
+                    SettingListItem(
+                        title = "升级 LibVLC 到 ${VlcNativeLibs.defaultVersion}",
+                        supportText = "已安装 $installedVlcVersion，点击下载并切换到新版",
+                        onClick = {
+                            vlcDownloadVersion = VlcNativeLibs.defaultVersion
+                            vlcDownloadForVersionSwitch = true
+                            showVlcDownloaderDialog = true
+                        },
+                    )
+                }
             }
             item {
                 SettingListItemWithDialog(
@@ -577,9 +596,9 @@ fun PlayerSetting(
             onDismissRequest = { showVlcDownloadConfirmDialog = false },
             title = { Text("需要下载 VLC 组件") },
             text = {
-                Text("VLC 播放器需要下载 libvlc-all ${VlcNativeLibs.describeVersion(selectedVlcVersion)} 组件才能使用。\n\n" +
+                Text("VLC 播放器需要下载 libvlc-all ${VlcNativeLibs.describeVersion(vlcDownloadVersion)} 组件才能使用。\n\n" +
                      "来源：Maven Central（连接失败时自动尝试镜像），安装前校验 SHA-256\n" +
-                     "下载大小：约 ${if (selectedVlcVersion == VlcNativeLibs.vlc4Version) "105" else "90"} MB\n" +
+                     "下载大小：约 ${if (vlcDownloadVersion == VlcNativeLibs.vlc4Version) "105" else "90"} MB\n" +
                      "建议在 Wi-Fi 环境下下载")
             },
             confirmButton = {
@@ -604,12 +623,15 @@ fun PlayerSetting(
     if (showVlcDownloaderDialog) {
         LibVLCDownloaderDialog(
             show = true,
-            version = selectedVlcVersion,
+            version = vlcDownloadVersion,
             onDismissRequest = {
                 showVlcDownloaderDialog = false
             },
             onDownloadComplete = {
                 showVlcDownloaderDialog = false
+                installedVlcVersion = VlcLibsInstaller.getInstalledVersion(context)
+                selectedVlcVersion = vlcDownloadVersion
+                Prefs.vlcSelectedVersion = vlcDownloadVersion
                 if (vlcDownloadForVersionSwitch) {
                     // 仅替换组件；内核保持用户当前的选择
                     Toast.makeText(context, "LibVLC $selectedVlcVersion 组件下载完成", Toast.LENGTH_SHORT).show()

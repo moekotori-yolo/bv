@@ -1,5 +1,11 @@
 [![Downloads](https://img.shields.io/github/downloads/leonwu85/bv/total?cacheSeconds=3600)](https://github.com/leonwu85/bv/releases)
 
+## VLC 组件升级到 3.7.6 (2026-09-22)
+
+- 默认下载的 `libvlc-all` 从 3.7.5 升到 3.7.6，同步更新 AAR 的 SHA-256 校验值，手机端与 TV 端共用。
+- 已核对上游 Java 源码及四种 ABI 的 JNI 接口，继续使用现有双版本 Java 兼容层；VLC 4 预览版仍为 4.0.0-eap29。
+- 正在使用 3.7.5 的用户进入手机端或 TV 端首页时会收到升级提示，可选择「升级并切换」或「稍后」；暂不升级仍可使用已安装的 3.7.5，播放器设置提供手动升级入口。下载完成后保存新版本选择，若进程已加载旧库则提示重启。
+
 ## 新增功能点汇总 (2026-09-06 ~ 2026-09-15)
 
 > 版本 `BV_1373_0.3.0.r1373.ac2451a6.release`，基于 `BV_1365_0.3.0.r1365.d0b8e521.release` 之后的提交整理

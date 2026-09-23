@@ -17,6 +17,7 @@ import dev.aaa1115910.bv.mobile.component.LibMPVDownloaderDialog
 import dev.aaa1115910.bv.mobile.component.LibVLCDownloaderDialog
 import dev.aaa1115910.bv.mobile.component.preferences.PreferenceGroupScope
 import dev.aaa1115910.bv.mobile.component.preferences.items.radioPreference
+import dev.aaa1115910.bv.mobile.component.preferences.items.listItemPreference
 import dev.aaa1115910.bv.mobile.settings.MobilePrefKeys
 import dev.aaa1115910.bv.mobile.settings.MobilePrefs
 import dev.aaa1115910.bv.mobile.util.MobileMpvOptions
@@ -31,7 +32,10 @@ import dev.aaa1115910.bv.util.VlcLibsInstaller
  */
 class PlayerKernelState internal constructor(
     private val onPlayerTypeChanged: (PlayerType) -> Unit,
+    installedVlcVersion: String,
 ) {
+    var installedVlcVersion by mutableStateOf(installedVlcVersion)
+        private set
     var showMpvDownloadConfirmDialog by mutableStateOf(false)
     var showMpvDownloaderDialog by mutableStateOf(false)
     var showVlcDownloadConfirmDialog by mutableStateOf(false)
@@ -91,6 +95,12 @@ class PlayerKernelState internal constructor(
         return true
     }
 
+    fun upgradeVlcStable() {
+        vlcDownloadForVersionSwitch = true
+        vlcDownloadVersion = VlcNativeLibs.defaultVersion
+        showVlcDownloaderDialog = true
+    }
+
     internal fun onMpvDownloaded(context: Context) {
         showMpvDownloaderDialog = false
         MobilePrefs.playerType = PlayerType.MPV
@@ -101,6 +111,8 @@ class PlayerKernelState internal constructor(
 
     internal fun onVlcDownloaded(context: Context) {
         showVlcDownloaderDialog = false
+        installedVlcVersion = VlcLibsInstaller.getInstalledVersion(context)
+        MobilePrefs.vlcSelectedVersion = vlcDownloadVersion
         if (vlcDownloadForVersionSwitch) {
             Toast.makeText(context, "LibVLC $vlcDownloadVersion 组件下载完成", Toast.LENGTH_SHORT).show()
         } else {
@@ -113,7 +125,10 @@ class PlayerKernelState internal constructor(
 
 @Composable
 fun rememberPlayerKernelState(onPlayerTypeChanged: (PlayerType) -> Unit = {}): PlayerKernelState {
-    return remember { PlayerKernelState(onPlayerTypeChanged) }
+    val context = LocalContext.current
+    return remember {
+        PlayerKernelState(onPlayerTypeChanged, VlcLibsInstaller.getInstalledVersion(context))
+    }
 }
 
 /**
@@ -130,6 +145,13 @@ fun PreferenceGroupScope.playerKernelPreferences(
         values = PlayerType.entries.associate { it.ordinal to it.name },
         onValueChange = { ordinal -> state.onPlayerTypeSelected(context, PlayerType.entries[ordinal]) }
     )
+    if (state.installedVlcVersion == VlcNativeLibs.previousStableVersion) {
+        listItemPreference(
+            title = "升级 LibVLC 到 ${VlcNativeLibs.defaultVersion}",
+            summary = "已安装 ${state.installedVlcVersion}，点击下载并切换到新版",
+            onClick = state::upgradeVlcStable,
+        )
+    }
     if (!includeVlcOptions) return
     radioPreference(
         title = "LibVLC 版本",
