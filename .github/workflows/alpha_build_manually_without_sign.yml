@@ -59,7 +59,7 @@ jobs:
           BV_APPLICATION_ID: ${{ steps.appid.outputs.app_id }}
         run: |
           set -euo pipefail
-          ./gradlew assembleDefaultAlpha assembleDefaultDebug --stacktrace --no-daemon
+          ./gradlew assembleDefaultAlpha --stacktrace --no-daemon
 
       - name: Collect APKs
         id: collect

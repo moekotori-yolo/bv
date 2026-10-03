@@ -110,16 +110,17 @@ jobs:
           echo "application_id_matches_gs=yes"
 
       - name: Build APKs
+        # 只构建 release。上游习惯性同时 assembleDefaultDebug，但 debug 类型强制
+        # applicationIdSuffix = ".debug"，包名变成 <你的包名>.debug，
+        # google-services.json 里永远不会有这个条目，会让构建在 R8 跑满后失败。
+        # 需要自测包请用「手动打包（Alpha，免签名）」workflow。
+        #
         # assembleDefaultRelease 会跑 R8 + baseline profile 合并，
         # 首次冷构建在 GitHub runner 上通常 20-35 分钟。
         timeout-minutes: 60
         run: |
           set -euo pipefail
-          ./gradlew \
-            assembleDefaultRelease \
-            assembleDefaultDebug \
-            --stacktrace \
-            --no-daemon
+          ./gradlew assembleDefaultRelease --stacktrace --no-daemon
 
       - name: Collect APKs
         id: collect
