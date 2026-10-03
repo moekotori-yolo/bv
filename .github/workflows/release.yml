@@ -13,6 +13,18 @@ on:
         description: '要发布的 tag（留空则使用当前 ref）。用于补发历史版本。'
         required: false
         default: ''
+      application_id:
+        description: >
+          applicationId。必须与 GOOGLE_SERVICES_JSON 里的某个 package_name
+          一致，否则 google-services 插件会报
+          "No matching client found for package name"。留空则用 APPLICATION_ID secret。
+        required: false
+        default: ''
+
+env:
+  # applicationId 决定最终 APK 的包名，也决定 google-services.json 走哪个条目。
+  # 优先级：workflow input > APPLICATION_ID secret > BV_APPLICATION_ID secret > 仓库默认。
+  BV_APPLICATION_ID: ${{ inputs.application_id || secrets.APPLICATION_ID || secrets.BV_APPLICATION_ID }}
 
 # tag 推送时 contents: write 才能创建 Release；PR 上不需要。
 permissions:
@@ -71,6 +83,31 @@ jobs:
           google-services-json: ${{ secrets.GOOGLE_SERVICES_JSON }}
           signing-properties: ${{ secrets.SIGNING_PROPERTIES }}
           sign-key: ${{ secrets.SIGN_KEY }}
+
+      - name: Verify applicationId matches google-services.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          GS="app/google-services.json"
+          if [[ ! -f "$GS" ]]; then
+            echo "::warning::no app/google-services.json, skip package name check."
+            exit 0
+          fi
+          PKGS="$(grep -o '"package_name": *"[^"]*"' "$GS" | sed 's/.*"\([^"]*\)"$/\1/' | sort -u | tr '\n' ',')"
+          echo "gs_packages=$PKGS"
+          echo "build_application_id=${BV_APPLICATION_ID:-<unset>}"
+          if [[ -z "${BV_APPLICATION_ID:-}" ]]; then
+            echo "::warning::BV_APPLICATION_ID unset, falling back to AppConfiguration.defaultApplicationId."
+            echo "::warning::if it is absent from gs_packages the build will fail after ~20 min."
+            exit 0
+          fi
+          if [[ ",$PKGS," != *",$BV_APPLICATION_ID,"* ]]; then
+            echo "::error::applicationId '$BV_APPLICATION_ID' is not in gs_packages."
+            echo "::error::available: $PKGS"
+            echo "::error::fix: set BV_APPLICATION_ID to one of them, or register that package in Firebase and re-download the config."
+            exit 1
+          fi
+          echo "application_id_matches_gs=yes"
 
       - name: Build APKs
         # assembleDefaultRelease 会跑 R8 + baseline profile 合并，

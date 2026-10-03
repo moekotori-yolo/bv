@@ -4,7 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       application_id:
-        description: '包名后缀。留空 = bv2，填 bv3 = dev.aaa1115910.bv3'
+        description: >
+          完整包名（如 com.moeneko.bv）。必须与 GOOGLE_SERVICES_JSON 里的某个
+          package_name 一致。留空则用 APPLICATION_ID secret，再留空回落 bv2。
         required: false
         default: ''
       sign:
@@ -27,17 +29,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # AppConfiguration.applicationId 依次读 BV_APPLICATION_ID 环境变量、
-          # bv.applicationId 系统属性，都没给时回落到 bv2。
-          SUFFIX="${{ github.event.inputs.application_id }}"
+          # 优先级：workflow input > APPLICATION_ID secret > AppConfiguration 默认值。
+          SUFFIX="${{ github.event.inputs.application_id || secrets.APPLICATION_ID || secrets.BV_APPLICATION_ID }}"
           if [[ -n "$SUFFIX" ]]; then
-            APP_ID="dev.aaa1115910.${SUFFIX}"
+            APP_ID="$SUFFIX"
           else
             APP_ID="dev.aaa1115910.bv2"
           fi
           echo "app_id=$APP_ID" >> "$GITHUB_OUTPUT"
-          # 注意：step 内不能引用 steps.<id>.outputs（自己的输出尚未产生），
-          # 这里用局部变量打印。
+          # step 内不能引用 steps.<id>.outputs（自己的输出尚未产生）。
           echo "使用包名：$APP_ID"
 
       - name: Checkout
