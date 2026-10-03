@@ -110,10 +110,31 @@ runs:
           exit 1
         fi
 
-        printf '%s' "$SIGNING_PROPERTIES" | base64 --decode > signing.properties
-        printf '%s' "$SIGN_KEY" | base64 --decode > key.jks
+        # base64 是单行大字符串，直接走 stdin。
+        # 用 --decode（不是 -d 之外的 GNU 专有参数）保证跨发行版可用；
+        # 失败时不立即退出，先把实际拿到的内容长度打出来再决定。
+        DECODED_PROPS_LEN=0
+        DECODED_KEY_LEN=0
+        if ! printf '%s' "$SIGNING_PROPERTIES" | base64 --decode > signing.properties 2>/tmp/b64err1; then
+          echo "::error::SIGNING_PROPERTIES base64 解码失败："
+          cat /tmp/b64err1
+          exit 1
+        fi
+        if ! printf '%s' "$SIGN_KEY" | base64 --decode > key.jks 2>/tmp/b64err2; then
+          echo "::error::SIGN_KEY base64 解码失败："
+          cat /tmp/b64err2
+          exit 1
+        fi
 
-        if [[ ! -s signing.properties ]]; then
+        DECODED_PROPS_LEN="$(wc -c < signing.properties | tr -d ' ')"
+        DECODED_KEY_LEN="$(wc -c < key.jks | tr -d ' ')"
+        echo "解码后 signing.properties = $DECODED_PROPS_LEN 字节"
+        echo "解码后 key.jks = $DECODED_KEY_LEN 字节"
+        echo "key.jks 前 8 字节 = $(od -An -tx1 -N8 key.jks | tr -s ' ')"
+        echo "key.jks MD5 = $(md5sum key.jks | cut -d' ' -f1)"
+        echo "本地生成时参考值：key.jks=2704 字节, MD5=c9f1b1d3d73cc97a591040884697eb38"
+
+        if [[ "$DECODED_PROPS_LEN" -eq 0 ]]; then
           echo "::error::signing.properties 解码后为空。secret 需要存 base64 编码后的内容。"
           exit 1
         fi
