@@ -57,28 +57,51 @@ CI 会写入 `app/google-services.json`。未配置时构建仍会继续（`AppC
 
 `signing.properties` 文件内容，**base64 编码后**存放。生成方式：
 
-```bash
-cat > /tmp/signing.properties <<'EOF'
-keystore.path=key.jks
-keystore.alias=你的别名
-keystore.alias_pwd=别名密码
-keystore.pwd=密钥库密码
-EOF
-base64 -i /tmp/signing.properties    # macOS: base64 -i /tmp/signing.properties
-                                       # Linux: base64 -w0 /tmp/signing.properties
+```powershell
+# 用 .NET API 精确写 LF：PowerShell 的 Out-File 默认写 CRLF，
+# 末行的 \r 会混进 keystore.pwd，导致 CI 报"密码错误"。
+$pwd = '你的密码'
+$aliasPwd = '你的密码'
+$lf = "keystore.path=key.jks`nkeystore.alias=bv`nkeystore.alias_pwd=$aliasPwd`nkeystore.pwd=$pwd"
+[IO.File]::WriteAllText("$env:TEMP\signing.properties", $lf, (New-Object Text.UTF8Encoding $false))
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("$env:TEMP\signing.properties"))
 ```
+
+> **最容易踩的坑**：文件末尾不能有多余的换行，`keystore.pwd=` 后面不能带 `\r`。
+> CI 会把解析到的密码长度打印出来对账，差一个字符就会失败。
 
 ### 3. `SIGN_KEY`（发正式版必需）
 
 `key.jks` 文件内容，**base64 编码后**存放：
 
-```bash
-base64 -i key.jks        # macOS
-base64 -w0 key.jks       # Linux
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("E:\bv_key.jks"))
 ```
 
-三个字段必须来自**同一次** `keytool -genkeypair`。CI 会用 `keytool -list` 实际打开一次校验，
-避免把损坏的 keystore 喂给 Gradle 后看到一个难懂的签名错误。
+### 用 gh CLI 上传（推荐，避免手工复制出错）
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("$env:TEMP\signing.properties")) | gh secret set SIGNING_PROPERTIES
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("E:\bv_key.jks"))               | gh secret set SIGN_KEY
+Get-Content "app\google-services.json" -Raw | gh secret set GOOGLE_SERVICES_JSON
+```
+
+### 本地自检（上传前务必跑一遍）
+
+```powershell
+$kt = "E:\jdk21\jdk-21.0.12.1+1\bin\keytool.exe"   # 或你的 JDK 路径
+$props = @{}
+Get-Content "$env:TEMP\signing.properties" | ForEach-Object {
+  if($_ -match '^\s*([^=]+)=(.*)$'){ $props[$matches[1].Trim()] = $matches[2].Trim() }
+}
+# 这行能通 = secret 内容正确
+& $kt -list -keystore "E:\bv_key.jks" -storepass $props['keystore.pwd'] -alias $props['keystore.alias']
+```
+
+CI 侧会做同样的校验，并在失败时打印：
+解码后字节数、`key.jks` 的 MD5、解析到的 alias 与**密码长度**。
+密码长度对不上就是 CRLF 污染。
+
 
 ### 生成 keystore
 
@@ -244,4 +267,40 @@ runs:
 ```
 
 这个错误**本地 actionlint 1.7.12 检测不到**，只有真跑 runner 才会暴露。
+
+---
+
+## 七、另外两个实测踩到的坑
+
+### 1. 本地 action 会被 GitHub 缓存
+
+```
+uses: ./.github/actions/setup-build
+```
+
+即使 action.yml 已经推送到远端、内容确认是新的，**重新触发仍然执行旧版本**。
+GitHub 对本地 action 的定义做了缓存，不随 commit 失效。
+
+实测现象：错误文案与新加的诊断代码都停留在旧 commit 的内容，
+一度让人以为改动没生效。
+
+改用远程引用即可，每次都按 ref 解析：
+
+```
+uses: moekotori-yolo/bv/.github/actions/setup-build@<branch-or-tag>
+```
+
+### 2. `android-actions/setup-android` 已不可用
+
+v3 会执行 `sdkmanager tools`，而 `tools` 包已从新版 Android SDK 仓库移除，
+直接报 `Failed to find package 'tools'`。
+
+GitHub 的 ubuntu runner 已预装完整 SDK，删掉该 action 即可；
+再用 `yes | sdkmanager --licenses` 预接受 license，避免 AGP 自动补装 platform 时交互式卡住。
+
+### 3. 日志输出用 ASCII
+
+runner 的 bash locale 下，中文日志行会**整段从日志中消失**。
+调试用的 `echo` 一律写 ASCII，否则会误判成"代码没执行到"。
+
 
