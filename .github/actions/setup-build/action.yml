@@ -128,11 +128,13 @@ runs:
 
         DECODED_PROPS_LEN="$(wc -c < signing.properties | tr -d ' ')"
         DECODED_KEY_LEN="$(wc -c < key.jks | tr -d ' ')"
-        echo "解码后 signing.properties = $DECODED_PROPS_LEN 字节"
-        echo "解码后 key.jks = $DECODED_KEY_LEN 字节"
-        echo "key.jks 前 8 字节 = $(od -An -tx1 -N8 key.jks | tr -s ' ')"
-        echo "key.jks MD5 = $(md5sum key.jks | cut -d' ' -f1)"
-        echo "本地生成时参考值：key.jks=2704 字节, MD5=c9f1b1d3d73cc97a591040884697eb38"
+        # 日志一律用 ASCII：runner 的 bash locale 下非 ASCII 输出可能被截断，
+        # 之前的中文诊断行就整段消失过，导致误判为"代码没生效"。
+        echo "decoded_props_bytes=$DECODED_PROPS_LEN"
+        echo "decoded_key_bytes=$DECODED_KEY_LEN"
+        echo "key_jks_head8=$(od -An -tx1 -N8 key.jks | tr -s ' ')"
+        echo "key_jks_md5=$(md5sum key.jks | cut -d' ' -f1)"
+        echo "local_ref: bytes=2704 md5=c9f1b1d3d73cc97a591040884697eb38"
 
         if [[ "$DECODED_PROPS_LEN" -eq 0 ]]; then
           echo "::error::signing.properties 解码后为空。secret 需要存 base64 编码后的内容。"
@@ -145,24 +147,21 @@ runs:
 
         # keystore 是二进制，用 file + keytool 双重确认解码正确，
         # 避免把损坏的 jks 喂给 Gradle 后得到一个难懂的签名错误。
-        echo "keystore type: $(file -b key.jks 2>/dev/null || echo 'file(1) 不可用')"
-        echo "signing.properties 大小: $(wc -c < signing.properties) 字节"
-        echo "key.jks 大小: $(wc -c < key.jks) 字节"
-
+        echo "keystore_type=$(file -b key.jks 2>/dev/null || echo 'file(1) unavailable')"
         KEYSTORE_PASS="$(sed -n 's/^keystore\.pwd=//p' signing.properties | head -n1)"
         KEY_ALIAS="$(sed -n 's/^keystore\.alias=//p' signing.properties | head -n1)"
         # 只回显 alias 与密码长度，绝不回显密码本身。
-        echo "解析到 alias='${KEY_ALIAS}' 密码长度=${#KEYSTORE_PASS}"
+        echo "parsed_alias='${KEY_ALIAS}' parsed_pass_len=${#KEYSTORE_PASS}"
 
         if [[ -n "$KEYSTORE_PASS" && -n "$KEY_ALIAS" ]]; then
           if keytool -list -keystore key.jks -storepass "$KEYSTORE_PASS" -alias "$KEY_ALIAS" >/tmp/kt.out 2>&1; then
-            echo "keystore 校验通过，alias=$KEY_ALIAS"
+            echo "keystore_ok alias=$KEY_ALIAS"
           else
-            echo "::error::key.jks 无法用 signing.properties 中的密码/别名打开。"
-            echo "::error::请确认三个 secret 来自同一次 keytool -genkeypair。"
-            echo "--- keytool 原始输出 ---"
+            echo "::error::keystore cannot be opened with the parsed password/alias."
+            echo "::error::Verify that the secrets come from the same keytool -genkeypair run."
+            echo "--- keytool raw output ---"
             cat /tmp/kt.out
-            echo "--- signing.properties 键名（值已隐藏） ---"
+            echo "--- signing.properties keys (values hidden) ---"
             sed 's/=.*/=***/' signing.properties
             exit 1
           fi
