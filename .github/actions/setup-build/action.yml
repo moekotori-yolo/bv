@@ -78,8 +78,20 @@ runs:
         fi
         mkdir -p app
         printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
-        # 只回显前若干字符确认写入成功，不打印完整内容
-        echo "google-services.json 已写入 ($(wc -c < app/google-services.json) bytes)"
+        echo "google_services_bytes=$(wc -c < app/google-services.json | tr -d ' ')"
+        # 打印文件里实际配置的包名。google-services.json 本身不是密钥
+        # （真正的私钥在 service account 里），因此只回显 package_name 列表是安全的；
+        # 但仍不打印 api_key / current_key 等字段。
+        echo "google_services_packages=$(grep -o '"package_name": *"[^"]*"' app/google-services.json | sed 's/.*"\([^"]*\)"$/\1/' | sort -u | tr '\n' ',' )"
+        # 校验是否合法 JSON，避免把粘贴残缺的内容喂给 Gradle
+        if command -v jq >/dev/null 2>&1; then
+          if jq -e . app/google-services.json >/dev/null 2>&1; then
+            echo "google_services_json=valid"
+          else
+            echo "::error::GOOGLE_SERVICES_JSON 不是合法 JSON，可能复制时被截断。"
+            exit 1
+          fi
+        fi
 
     # signing.properties 与 key.jks 都按 base64 存放。
     # 上游旧写法是 `echo $SECRET > f && base64 -Dd -i f > out`，
