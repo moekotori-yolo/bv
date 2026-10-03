@@ -199,3 +199,49 @@ app/build/outputs/apk/default/<buildType>/
 
 产物文件名由 `app/build.gradle.kts` 的 `androidComponents.outputFileName` 动态拼接，
 版本号变化后文件名也会变 —— workflow 用 glob 匹配，不再硬编码路径。
+
+---
+
+## 六、改 workflow 时的一个坑
+
+**composite action 内部不能用 `secrets` 和 `gradle` 上下文。**
+
+`action.yml` 的 manifest 在 runner **加载阶段**就做模板求值，而这个阶段只注入了
+`inputs` 和 `github`。写成：
+
+```yaml
+# 错误 —— runner 加载时就报错，job 一步都跑不起来
+- name: Restore
+  env:
+    KEY: ${{ secrets.SIGN_KEY }}
+```
+
+会得到：
+
+```
+Unrecognized named-value: 'secrets'. Located at position 1 within expression: secrets.SIGN_KEY
+```
+
+正确做法是声明 input，由调用方 workflow 展开后传入：
+
+```yaml
+# action.yml
+inputs:
+  sign-key:
+    description: 'key.jks 的 base64 内容'
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - env:
+        SIGN_KEY: ${{ inputs.sign-key }}      # 这里只能用 inputs
+
+# workflow.yml
+- uses: ./.github/actions/setup-build
+  with:
+    sign-key: ${{ secrets.SIGN_KEY }}          # secrets 只在这里可用
+```
+
+这个错误**本地 actionlint 1.7.12 检测不到**，只有真跑 runner 才会暴露。
+

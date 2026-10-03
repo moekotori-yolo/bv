@@ -167,11 +167,13 @@ runs:
         java-version: '21'
         distribution: 'temurin'
 
-    - name: Set up Android SDK
-      uses: android-actions/setup-android@v3
-
-    # 额外缓存 Android SDK 的已安装组件，避免每次 runner 重装 platform / build-tools。
-    # setup-gradle 已经缓存了 Gradle 依赖与构建产物，这里补的是 SDK 侧。
+    # 刻意不使用 android-actions/setup-android：它在 v3 会执行
+    # `sdkmanager tools`，而该包已从新版 Android SDK 仓库移除，导致
+    # "Failed to find package 'tools'" 直接失败。
+    # GitHub 的 ubuntu runner 已预装 Android SDK（含 cmdline-tools、
+    # platform-tools、build-tools），Gradle 的 AGP 会在需要时自动补装
+    # compileSdk 对应的 platform。
+    # 额外缓存 SDK 里体积大、重下慢的组件。
     - name: Cache Android SDK packages
       uses: actions/cache@v4
       with:
@@ -184,6 +186,24 @@ runs:
           android-sdk-${{ runner.os }}-${{ inputs.variant }}-
 
     # 让后续 ./gradlew 调用能复用 setup-gradle 装好的 distribution。
+    - name: Accept Android SDK licenses
+      shell: bash
+      run: |
+        set -euo pipefail
+        # runner 镜像预装了 sdkmanager，但没有预接受 license；
+        # AGP 自动补装 platform 时会因此交互式卡住。
+        # 这里用 yes 预先接受，失败不阻断（部分镜像本就已接受）。
+        SDKMANAGER="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}/cmdline-tools/latest/bin/sdkmanager"
+        if [[ ! -x "$SDKMANAGER" ]]; then
+          SDKMANAGER="$(find "${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}/cmdline-tools" -name sdkmanager -type f 2>/dev/null | sort | tail -n1 || true)"
+        fi
+        if [[ -n "$SDKMANAGER" && -x "$SDKMANAGER" ]]; then
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || \
+            echo "::warning::sdkmanager --licenses 未成功，若后续构建卡在 license 请检查 SDK 镜像。"
+        else
+          echo "::warning::未找到 sdkmanager，跳过 license 接受。"
+        fi
+
     - name: Report environment
       shell: bash
       run: |
