@@ -53,6 +53,39 @@ Firebase 控制台下载的 `google-services.json` **明文内容**（不是 bas
 CI 会写入 `app/google-services.json`。未配置时构建仍会继续（`AppConfiguration.isGoogleServicesAvailable`
 返回 false，Crashlytics 上传自动关闭），但会有一条 warning。
 
+上传：
+
+```powershell
+Get-Content "app\google-services.json" -Raw | gh secret set GOOGLE_SERVICES_JSON
+```
+
+### 1.5 `APPLICATION_ID`（必需，除非手动触发时填 input）
+
+**最终 APK 的包名**，必须与 `GOOGLE_SERVICES_JSON` 里某个 `package_name` 完全一致，
+否则构建会在 R8 跑满 20 分钟后才失败：
+
+```
+No matching client found for package name 'dev.aaa1115910.bv2' in app/google-services.json
+```
+
+先查自己的配置里有哪些包名：
+
+```powershell
+(Select-String -Path "app\google-services.json" -Pattern '"package_name": *"([^"]+)"' -AllMatches).Matches.Groups[1].Value
+```
+
+把其中一个填进去：
+
+```powershell
+"com.moeneko.bv" | gh secret set APPLICATION_ID
+```
+
+优先级：`workflow input` > `APPLICATION_ID` secret > `BV_APPLICATION_ID` secret >
+`AppConfiguration.defaultApplicationId`（默认 `dev.aaa1115910.bv2`）。
+
+`release.yml` 会在构建**之前**校验两者是否匹配，不匹配立刻失败并列出可用包名，
+不用再等 20 分钟。
+
 ### 2. `SIGNING_PROPERTIES`（发正式版必需）
 
 `signing.properties` 文件内容，**base64 编码后**存放。生成方式：
@@ -77,6 +110,15 @@ $lf = "keystore.path=key.jks`nkeystore.alias=bv`nkeystore.alias_pwd=$aliasPwd`nk
 ```powershell
 [Convert]::ToBase64String([IO.File]::ReadAllBytes("E:\bv_key.jks"))
 ```
+
+### 四个 secret 速查
+
+| Secret | 内容格式 | 缺失后果 |
+| --- | --- | --- |
+| `GOOGLE_SERVICES_JSON` | 明文 JSON | 构建继续，Crashlytics 关闭 |
+| `APPLICATION_ID` | 明文包名 | 用仓库默认包名，多半与 gs 配置不符 → 构建失败 |
+| `SIGNING_PROPERTIES` | base64（**LF，无尾换行**） | 连同 `SIGN_KEY` 一起缺则退回 debug 签名 |
+| `SIGN_KEY` | base64 | 同上 |
 
 ### 用 gh CLI 上传（推荐，避免手工复制出错）
 
@@ -302,5 +344,12 @@ GitHub 的 ubuntu runner 已预装完整 SDK，删掉该 action 即可；
 
 runner 的 bash locale 下，中文日志行会**整段从日志中消失**。
 调试用的 `echo` 一律写 ASCII，否则会误判成"代码没执行到"。
+
+### 4. applicationId 与 google-services.json 必须对齐
+
+`google-services.json` 是按包名索引的。构建时 AGP 用 `applicationId` 去查条目，
+查不到就在 R8 跑满之后才报错。用 `APPLICATION_ID` secret 显式指定，
+`release.yml` 已加前置校验。
+
 
 
