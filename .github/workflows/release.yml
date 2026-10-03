@@ -57,8 +57,12 @@ jobs:
           fetch-depth: 0
           submodules: false
 
+      # 用远程引用而不是 `uses: ./.github/actions/setup-build`：
+      # 本地 action 会被 GitHub 缓存，修改后重新触发仍跑旧版本
+      # （已实测：错误文案与诊断代码都停留在旧 commit 的内容）。
+      # 引用远程分支/标签时 GitHub 每次都按 ref 解析，不受该缓存影响。
       - name: Set up build
-        uses: ./.github/actions/setup-build
+        uses: moekotori-yolo/bv/.github/actions/setup-build@feature-customisation-0001
         with:
           variant: release
           sign: 'true'

@@ -35,7 +35,7 @@ jobs:
           submodules: false
 
       - name: Set up build
-        uses: ./.github/actions/setup-build
+        uses: moekotori-yolo/bv/.github/actions/setup-build@feature-customisation-0001
         with:
           variant: alpha
           # 分支构建默认不要求签名材料：PR 来自 fork 时拿不到 secrets，

@@ -47,7 +47,7 @@ jobs:
           submodules: false
 
       - name: Set up build
-        uses: ./.github/actions/setup-build
+        uses: moekotori-yolo/bv/.github/actions/setup-build@feature-customisation-0001
         with:
           variant: release
           # 手动打包允许不带签名（自测场景），缺 secret 时退回 debug 签名。
