@@ -51,8 +51,10 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -149,6 +151,8 @@ internal fun resolveGeetestModeAfterRefresh(
  * 2. 手机验证：局域网 HTTP 页面 + 二维码，手机触屏完成极验后自动回传
  *
  * @param mockMode Debug 用：不请求真实极验，用可点击 mock 页测遥控器/手机链路
+ * @param debugHud Debug 用：叠加面板实测指标与局域网诊断。不 focusable / 不 clickable，
+ *   不改变原有按键分发与焦点行为。
  */
 @Composable
 fun GeetestTvVerifyDialog(
@@ -159,6 +163,7 @@ fun GeetestTvVerifyDialog(
     onRefreshChallenge: (suspend () -> Boolean)? = null,
     mockMode: Boolean = false,
     initialMode: GeetestVerifyMode = GeetestVerifyMode.TvRemote,
+    debugHud: Boolean = GeetestTvDebugHudState.enabled,
 ) {
     var mode by remember { mutableStateOf(initialMode) }
     val tvModeFocusRequester = remember { FocusRequester() }
@@ -181,6 +186,13 @@ fun GeetestTvVerifyDialog(
     var challengeRefreshRequest by remember { mutableIntStateOf(0) }
     var challengeRefreshError by remember { mutableStateOf<String?>(null) }
     var enterAfterChallengeRefresh by remember { mutableStateOf(false) }
+
+    // 调试 HUD：面板指标由页面内 JS 探针回传，弹窗自身尺寸由 onGloballyPositioned 采集。
+    var debugMetrics by remember { mutableStateOf<GeetestPanelMetrics?>(null) }
+    var debugWebViewSizePx by remember { mutableStateOf(0 to 0) }
+    var debugDialogHeightPx by remember { mutableIntStateOf(0) }
+    val density = LocalDensity.current
+    val screenHeightDp = LocalConfiguration.current.screenHeightDp
 
     // 当前选中模式对应的 tab 焦点，验证区按返回时落到这里
     val activeModeFocusRequester = when (mode) {
@@ -292,6 +304,7 @@ fun GeetestTvVerifyDialog(
                 modifier = Modifier
                     .fillMaxWidth(0.55f)
                     .widthIn(max = 720.dp)
+                    .onSizeChanged { debugDialogHeightPx = it.height }
                     .clip(RoundedCornerShape(16.dp))
                     .background(MaterialTheme.colorScheme.surface)
                     .padding(bottom = 8.dp),
@@ -347,6 +360,9 @@ fun GeetestTvVerifyDialog(
                             sliderMode = tvMode == GeetestVerifyMode.TvSlider,
                             contentFocusRequester = contentFocusRequester,
                             modeTabFocusRequester = activeModeFocusRequester,
+                            debugHud = debugHud,
+                            onDebugMetrics = { debugMetrics = it },
+                            onDebugWebViewSize = { w, h -> debugWebViewSizePx = w to h },
                             onTvModeDetected = { detectedMode ->
                                 detectedTvMode = detectedMode
                                 if (
@@ -369,6 +385,20 @@ fun GeetestTvVerifyDialog(
                         )
                     }
                 }
+            }
+
+            if (debugHud) {
+                GeetestTvDebugHud(
+                    metrics = debugMetrics,
+                    webViewWidthPx = debugWebViewSizePx.first,
+                    webViewHeightPx = debugWebViewSizePx.second,
+                    density = density.density,
+                    dialogHeightDp = with(density) { debugDialogHeightPx.toDp().value.toInt() },
+                    screenHeightDp = screenHeightDp,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .widthIn(max = 620.dp),
+                )
             }
         }
     }
@@ -706,6 +736,9 @@ private fun GeetestTvVerifyContent(
     sliderMode: Boolean,
     contentFocusRequester: FocusRequester,
     modeTabFocusRequester: FocusRequester,
+    debugHud: Boolean = false,
+    onDebugMetrics: (GeetestPanelMetrics?) -> Unit = {},
+    onDebugWebViewSize: (Int, Int) -> Unit = { _, _ -> },
     onTvModeDetected: (GeetestVerifyMode) -> Unit,
     onResult: (GeetestTvResult) -> Unit,
 ) {
@@ -865,11 +898,19 @@ private fun GeetestTvVerifyContent(
             finishDrag(cancelled = true)
             webViewRef?.let { wv ->
                 runCatching {
+                    // 探针是 setInterval，必须先停掉，否则销毁后仍会回调已失效的 JS 桥。
+                    if (debugHud) {
+                        wv.evaluateJavascript(
+                            "if (window.__bvGeetestDebugTimer) clearInterval(window.__bvGeetestDebugTimer);",
+                            null,
+                        )
+                    }
                     wv.removeJavascriptInterface("Android")
                     wv.stopLoading()
                     wv.destroy()
                 }
             }
+            onDebugWebViewSize(0, 0)
         }
     }
 
@@ -1053,13 +1094,21 @@ private fun GeetestTvVerifyContent(
                                         }
                                     }
                                 }
+
+                                @JavascriptInterface
+                                fun onDebugMetrics(payload: String?) {
+                                    // 面板尺寸是 0.5s 过渡出来的，探针会持续上报，这里只保留最后一次。
+                                    val parsed = parseGeetestPanelMetrics(payload) ?: return
+                                    callbackScope.launch { onDebugMetrics(parsed) }
+                                }
                             },
                             "Android"
                         )
 
+                        val html = if (mockMode) buildMockGeetestHtml() else buildGeetestHtml(gt, challenge)
                         loadDataWithBaseURL(
                             "https://api.bilibili.com/",
-                            if (mockMode) buildMockGeetestHtml() else buildGeetestHtml(gt, challenge),
+                            if (debugHud) html + buildGeetestDebugProbeJs() else html,
                             "text/html",
                             "utf-8",
                             null,
@@ -1091,6 +1140,7 @@ private fun GeetestTvVerifyContent(
                         if (wv.width > 0 && wv.height > 0) {
                             containerWidthPx = wv.width.toFloat()
                             containerHeightPx = wv.height.toFloat()
+                            if (debugHud) onDebugWebViewSize(wv.width, wv.height)
                         }
                     }
                     overlayRef?.setCursorPosition(cursorX, cursorY)

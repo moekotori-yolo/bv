@@ -2,29 +2,51 @@ name: Check Issues
 
 on:
   issues:
-    types: [ opened ]
+    types: [opened]
+
+permissions:
+  issues: write
+
 jobs:
   check:
+    name: Auto-close low-quality issues
     runs-on: ubuntu-latest
+    # 未填写模板标题（标题仍含占位文案）或明确标注旧版本的问题，自动关闭。
+    # 两个条件可能同时命中，合并到一个 job 里按优先级只执行一次，
+    # 避免上游两个串行 step 各自触发导致重复评论。
     steps:
-      - if: contains(github.event.issue.title, '以简单的一段字概括' )
-        id: close-invalid-title
-        name: Close Issue (invalid title)
-        uses: actions-cool/issues-helper@v3
-        with:
-          actions: 'add-labels,close-issue'
-          token: ${{ secrets.GITHUB_TOKEN }}
-          issue-number: ${{ github.event.issue.number }}
-          labels: '无效'
-          close-reason: 'not_planned'
+      - name: Classify issue
+        id: classify
+        shell: bash
+        env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          set -euo pipefail
+          if [[ "$ISSUE_TITLE" == *"以简单的一段字概括"* ]]; then
+            echo "action=close" >> "$GITHUB_OUTPUT"
+            echo "label=无效" >> "$GITHUB_OUTPUT"
+            echo "reason=not_planned" >> "$GITHUB_OUTPUT"
+            echo "comment=标题仍保留模板占位文案「以简单的一段字概括」，请按 issue 模板重新填写后再提交。" >> "$GITHUB_OUTPUT"
+            echo "判为：标题未修改（无效）"
+          elif [[ "$ISSUE_BODY" == *"我正在使用旧版本"* ]]; then
+            echo "action=close" >> "$GITHUB_OUTPUT"
+            echo "label=" >> "$GITHUB_OUTPUT"
+            echo "reason=not_planned" >> "$GITHUB_OUTPUT"
+            echo "comment=请先升级到当前最新版本（release 或 alpha）再提交 issue；若问题依然存在，请把该版本号一并写进正文。" >> "$GITHUB_OUTPUT"
+            echo "判为：使用旧版本"
+          else
+            echo "action=none" >> "$GITHUB_OUTPUT"
+            echo "无需处理"
+          fi
 
-      - if: contains(github.event.issue.body, '我正在使用旧版本' )
-        id: close-old-version
-        name: Close Issue (old version)
-        uses: actions-cool/issues-helper@v3
+      - name: Close issue
+        if: steps.classify.outputs.action == 'close'
+        uses: actions-cool/issues-helper@v4
         with:
-          actions: 'create-comment,close-issue'
+          actions: ${{ steps.classify.outputs.label != '' && 'add-labels,create-comment,close-issue' || 'create-comment,close-issue' }}
           token: ${{ secrets.GITHUB_TOKEN }}
           issue-number: ${{ github.event.issue.number }}
-          close-reason: 'not_planned'
-          body: 请先尝试使用当前最新 alpha（或release） 版本，如果问题依然存在再提交 issue
+          close-reason: ${{ steps.classify.outputs.reason }}
+          body: ${{ steps.classify.outputs.comment }}
+          labels: ${{ steps.classify.outputs.label }}

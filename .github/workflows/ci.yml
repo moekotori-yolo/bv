@@ -1,0 +1,105 @@
+name: CI
+
+# 不依赖任何 secret 的健康检查：编译 + 单元测试 + lint。
+# 这样在还没配置签名材料时也能确认仓库本身是好的，
+# 把「构建问题」和「secret 没配」区分开。
+on:
+  push:
+    branches:
+      - master
+      - develop
+      - 'feature/**'
+  pull_request:
+    branches:
+      - master
+      - develop
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Compile + Test + Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Set up build
+        uses: ./.github/actions/setup-build
+        with:
+          variant: debug
+          # CI 不碰签名与 Firebase，避免 secret 缺失直接失败。
+          sign: 'false'
+          google-services: 'false'
+
+      # 单元测试：app/tv 与 app/shared 是本次改动所在的两个模块，
+      # 全量 testDebugUnitTest 会跑到其余模块，用 --tests 限定范围更快。
+      - name: Unit tests
+        timeout-minutes: 30
+        run: |
+          set -euo pipefail
+          ./gradlew \
+            :app:tv:testDebugUnitTest \
+            :app:shared:testDebugUnitTest \
+            :app:mobile:testDebugUnitTest \
+            --stacktrace \
+            --no-daemon
+
+      # 编译 release 不开 minify：R8 在 CI 上慢且容易因内存被杀，
+      # 真正的 release 验证由 Release Build workflow 承担。
+      - name: Compile (no R8)
+        timeout-minutes: 40
+        run: |
+          set -euo pipefail
+          ./gradlew \
+            assembleDefaultDebug \
+            compileDefaultReleaseKotlin \
+            --stacktrace \
+            --no-daemon
+
+      - name: Lint
+        timeout-minutes: 30
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          # lint 历史上存在存量告警，先设为不阻断，
+          # 报告仍然会上传到 Actions 页面供查看。
+          ./gradlew :app:lintDefaultDebug --stacktrace --no-daemon
+
+      - name: Summarize test results
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "### CI 结果"
+            echo ""
+            for m in app/tv app/shared app/mobile; do
+              D="$m/build/test-results/testDebugUnitTest"
+              if [[ -d "$D" ]]; then
+                T=0; F=0
+                for f in "$D"/*.xml; do
+                  [[ -e "$f" ]] || continue
+                  C=$(grep -o 'tests="[0-9]*"' "$f" | head -1 | grep -o '[0-9]*')
+                  E=$(grep -o 'failures="[0-9]*"' "$f" | head -1 | grep -o '[0-9]*')
+                  T=$((T + ${C:-0}))
+                  F=$((F + ${E:-0}))
+                done
+                echo "- \`$m\`: $T tests, $F failures"
+              else
+                echo "- \`$m\`: 未执行"
+              fi
+            done
+            echo ""
+            echo "本 CI 未使用签名材料，产出不可安装，仅验证代码健康度。"
+          } >> "$GITHUB_STEP_SUMMARY"

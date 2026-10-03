@@ -232,6 +232,8 @@
     <string name="settings_mock_geetest_phone_text">打开扫码页 + mock H5，测局域网回传链路</string>
     <string name="settings_mock_geetest_success">Mock 验证成功：challenge=%1$s</string>
     <string name="settings_mock_geetest_cancelled">已取消 Mock 验证</string>
+    <string name="settings_geetest_debug_hud_title">Geetest 调试 HUD</string>
+    <string name="settings_geetest_debug_hud_text">在验证弹窗左下角叠加面板实测尺寸、裁切量与局域网网卡信息</string>
     <string name="settings_create_logs_text">查看最近的崩溃日志，也可以手动保存日志</string>
     <string name="settings_create_logs_title">查看日志</string>
     <string name="settings_logout_cancel">取消</string>

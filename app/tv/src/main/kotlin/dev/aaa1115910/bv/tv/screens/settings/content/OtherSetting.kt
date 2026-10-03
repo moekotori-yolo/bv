@@ -26,6 +26,7 @@ import androidx.tv.material3.Text
 import dev.aaa1115910.bv.BuildConfig
 import dev.aaa1115910.bv.R
 import dev.aaa1115910.bv.repository.UserRepository
+import dev.aaa1115910.bv.tv.component.GeetestTvDebugHudState
 import dev.aaa1115910.bv.tv.component.GeetestTvVerifyDialog
 import dev.aaa1115910.bv.tv.component.GeetestVerifyMode
 import dev.aaa1115910.bv.tv.component.TvAlertDialog
@@ -56,6 +57,7 @@ fun OtherSetting(
     var showLogoutDialog by remember { mutableStateOf(false) }
     var logoutInProgress by remember { mutableStateOf(false) }
     var mockGeetestMode by remember { mutableStateOf<GeetestVerifyMode?>(null) }
+    var geetestDebugHud by remember { mutableStateOf(GeetestTvDebugHudState.enabled) }
 
     Column(
         modifier = modifier.fillMaxSize(),
@@ -141,6 +143,17 @@ fun OtherSetting(
                         supportText = stringResource(R.string.settings_mock_geetest_phone_text),
                         onClick = {
                             mockGeetestMode = GeetestVerifyMode.PhoneCompanion
+                        }
+                    )
+                }
+                item {
+                    SettingSwitchListItem(
+                        title = stringResource(R.string.settings_geetest_debug_hud_title),
+                        supportText = stringResource(R.string.settings_geetest_debug_hud_text),
+                        checked = geetestDebugHud,
+                        onCheckedChange = {
+                            geetestDebugHud = it
+                            GeetestTvDebugHudState.enabled = it
                         }
                     )
                 }

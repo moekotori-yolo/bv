@@ -1,0 +1,182 @@
+name: BV build setup
+description: >
+  BV 项目的公共构建准备步骤：还原 google-services.json / 签名材料、检出
+  git 子模块（libs）、配置 Gradle 与 Android 构建缓存。
+  供 release / alpha / feature / 手动打包各 workflow 复用。
+
+inputs:
+  variant:
+    description: >
+      要构建的 variant 名（release / alpha / debug / r8Test）。仅用于日志与
+      缓存键区分，不影响还原逻辑。
+    required: false
+    default: release
+  sign:
+    description: >
+      是否需要签名材料。false 时即使缺少 SIGNING_PROPERTIES / SIGN_KEY secret
+      也不会失败 —— 构建会退回 debug 签名（app/build.gradle.kts 里
+      signingConfig 仅在 signing.properties 存在时启用）。
+    required: false
+    default: 'true'
+  google-services:
+    description: >
+      是否需要还原 app/google-services.json。false 时跳过，Firebase 相关
+      功能在无该文件时自动降级（AppConfiguration.isGoogleServicesAvailable）。
+    required: false
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    - name: Grant execute permission for gradlew
+      shell: bash
+      run: chmod +x gradlew
+
+    # 共享 action 里不能假设工作目录，git checkout 的 action 已经 cd 到仓库根，
+    # 但这里显式声明一次，避免后续相对路径在不同调用点下出错。
+    - name: Report build context
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "repo      : ${{ github.repository }}"
+        echo "ref       : ${{ github.ref_name }}"
+        echo "variant   : ${{ inputs.variant }}"
+        echo "sign      : ${{ inputs.sign }}"
+        echo "g-services: ${{ inputs.google-services }}"
+        echo "submodules:"
+        git submodule status || true
+
+    - name: Restore google-services.json
+      if: inputs.google-services == 'true'
+      shell: bash
+      env:
+        # 用 printf 而不是 echo：JSON 里常有多行和以 - 开头的字段，
+        # echo 在部分 shell 下会吞掉转义。
+        GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+      run: |
+        set -euo pipefail
+        if [[ -z "${GOOGLE_SERVICES_JSON}" ]]; then
+          echo "::warning::GOOGLE_SERVICES_JSON 未配置，跳过 Firebase 配置。"
+          echo "::warning::构建仍会继续，但 Crashlytics 上传与部分 Firebase 功能不可用。"
+          rm -f app/google-services.json
+          exit 0
+        fi
+        mkdir -p app
+        printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
+        # 只回显前若干字符确认写入成功，不打印完整内容
+        echo "google-services.json 已写入 ($(wc -c < app/google-services.json) bytes)"
+
+    # signing.properties 与 key.jks 都按 base64 存放。
+    # 上游旧写法是 `echo $SECRET > f && base64 -Dd -i f > out`，
+    # 依赖 echo 不吞内容、且 -i 忽略垃圾字符，跨 shell/换行时容易静默产出坏文件。
+    # 这里统一改成直接管道解码，并用 keytool 校验 keystore 真的可用。
+    - name: Restore signing materials
+      if: inputs.sign == 'true'
+      shell: bash
+      env:
+        SIGNING_PROPERTIES: ${{ secrets.SIGNING_PROPERTIES }}
+        SIGN_KEY: ${{ secrets.SIGN_KEY }}
+      run: |
+        set -euo pipefail
+
+        if [[ -z "${SIGNING_PROPERTIES}" && -z "${SIGN_KEY}" ]]; then
+          echo "::warning::SIGNING_PROPERTIES 与 SIGN_KEY 均未配置，本次构建将使用 debug 签名。"
+          echo "::warning::产出的 APK 不能覆盖安装已正式签名的版本，仅供自测。"
+          rm -f signing.properties key.jks
+          exit 0
+        fi
+
+        if [[ -z "${SIGNING_PROPERTIES}" ]]; then
+          echo "::error::配置了 SIGN_KEY 但缺少 SIGNING_PROPERTIES，无法定位 keystore。"
+          exit 1
+        fi
+        if [[ -z "${SIGN_KEY}" ]]; then
+          echo "::error::配置了 SIGNING_PROPERTIES 但缺少 SIGN_KEY。"
+          exit 1
+        fi
+
+        printf '%s' "$SIGNING_PROPERTIES" | base64 --decode > signing.properties
+        printf '%s' "$SIGN_KEY" | base64 --decode > key.jks
+
+        if [[ ! -s signing.properties ]]; then
+          echo "::error::signing.properties 解码后为空。secret 需要存 base64 编码后的内容。"
+          exit 1
+        fi
+        if [[ ! -s key.jks ]]; then
+          echo "::error::key.jks 解码后为空。secret 需要存 base64 编码后的内容。"
+          exit 1
+        fi
+
+        # keystore 是二进制，用 file + keytool 双重确认解码正确，
+        # 避免把损坏的 jks 喂给 Gradle 后得到一个难懂的签名错误。
+        echo "keystore type: $(file -b key.jks 2>/dev/null || echo 'file(1) 不可用')"
+        KEYSTORE_PASS="$(sed -n 's/^keystore\.pwd=//p' signing.properties | head -n1)"
+        KEY_ALIAS="$(sed -n 's/^keystore\.alias=//p' signing.properties | head -n1)"
+        if [[ -n "$KEYSTORE_PASS" && -n "$KEY_ALIAS" ]]; then
+          if keytool -list -keystore key.jks -storepass "$KEYSTORE_PASS" -alias "$KEY_ALIAS" >/dev/null 2>&1; then
+            echo "keystore 校验通过，alias=$KEY_ALIAS"
+          else
+            echo "::error::key.jks 无法用 signing.properties 中的密码/别名打开。"
+            echo "::error::请确认三个 secret 来自同一次 keytool -genkeypair。"
+            exit 1
+          fi
+        else
+          echo "::warning::signing.properties 中未解析到 keystore.pwd / keystore.alias，跳过校验。"
+        fi
+
+    - name: Restore submodules
+      shell: bash
+      run: |
+        set -euo pipefail
+        # libs 子模块（libVLC / ffmpeg / av1 / media3Container）是构建必需项。
+        # checkout 已带 submodules: true，这里再做一次兜底并显式拉取，
+        # 避免上游 tag 推送时子模块指针未同步导致构建中途才失败。
+        if [[ -f .gitmodules ]]; then
+          git submodule sync --recursive
+          git submodule update --init --recursive --depth 1
+          echo "子模块状态："
+          git submodule status --recursive
+        fi
+
+    - name: Set up Gradle
+      uses: gradle/actions/setup-gradle@v4
+      with:
+        # 开启后依赖图会自动上报到 GitHub，安全审计里能看到新增依赖。
+        dependency-graph: generate-and-submit
+        # 缓存命中时把 Gradle daemon 一起复用，省掉冷启动的十几秒。
+        cache-read-only: ${{ github.ref != 'refs/heads/master' }}
+
+    - name: Set up JDK 21
+      uses: actions/setup-java@v5
+      with:
+        java-version: '21'
+        distribution: 'temurin'
+
+    - name: Set up Android SDK
+      uses: android-actions/setup-android@v3
+
+    # 额外缓存 Android SDK 的已安装组件，避免每次 runner 重装 platform / build-tools。
+    # setup-gradle 已经缓存了 Gradle 依赖与构建产物，这里补的是 SDK 侧。
+    - name: Cache Android SDK packages
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{ env.ANDROID_SDK_ROOT || '/usr/local/lib/android/sdk' }}/platforms
+          ${{ env.ANDROID_SDK_ROOT || '/usr/local/lib/android/sdk' }}/build-tools
+          ${{ env.ANDROID_SDK_ROOT || '/usr/local/lib/android/sdk' }}/platform-tools
+        key: android-sdk-${{ runner.os }}-${{ inputs.variant }}-${{ hashFiles('app/build.gradle.kts', 'gradle/libs.versions.toml', 'buildSrc/src/main/kotlin/AppConfiguration.kt') }}
+        restore-keys: |
+          android-sdk-${{ runner.os }}-${{ inputs.variant }}-
+
+    # 让后续 ./gradlew 调用能复用 setup-gradle 装好的 distribution。
+    - name: Report environment
+      shell: bash
+      run: |
+        set -euo pipefail
+        java -version 2>&1 | head -n1
+        # setup-gradle 会把缓存命中情况写到 ~/.gradle/build-scan/ 与控制台摘要，
+        # 这里只打印构建身份信息，便于在 Actions 日志里对齐具体变体。
+        echo "variant   : ${{ inputs.variant }}"
+        echo "signing   : ${{ inputs.sign }}"
+        echo "gradle cache enabled: ${{ gradle.cache-enabled }}"
+        echo "cache-state (true=已命中): ${{ gradle.cache-state }}"

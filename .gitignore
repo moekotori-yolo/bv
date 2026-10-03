@@ -17,5 +17,9 @@ buildSrc
 bin
 keystore.jks
 signing.properties
+# CI 手动打包时在工作区根目录还原出的密钥库，必须忽略。
+/key.jks
+# R8 mapping 与 zip：仅用于发版与崩溃还原，不需要进版本库。
+/mapping.zip
 *.log
 /app/default/

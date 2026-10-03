@@ -2,21 +2,34 @@ name: Close inactive issues
 on:
   schedule:
     - cron: "30 1 * * *"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  pull-requests: write
+
+# 手动触发与定时触发同时在跑时只保留一个，避免重复打标签。
+concurrency:
+  group: stale-issues
+  cancel-in-progress: true
 
 jobs:
   close-issues:
     name: Close inactive issues
     runs-on: ubuntu-latest
-    permissions:
-      issues: write
     steps:
-      - uses: actions/stale@v5
+      - uses: actions/stale@v9
         with:
           days-before-issue-stale: 60
           days-before-issue-close: 14
+          # 上游用 -1 关闭了 PR 的 stale 处理。这里保持关闭 ——
+          # PR 长期挂着通常是作者还没来得及看，关掉会丢掉后续更新提醒。
           days-before-pr-stale: -1
           stale-issue-label: "过时"
           stale-issue-message: "该 issue 已过时，因为它已经超过 60 天没有任何活动"
           close-issue-message: "该 issue 已关闭，因为它在被标记为过时后 14 天依旧没有任何活动"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           exempt-issue-labels: "bug,新功能,优化,有待讨论,疑难杂症"
+          # 只处理 issue，不动 discussion 与 PR
+          only-issue-labels: ""
+          operations-per-run: 200

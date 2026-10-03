@@ -5,117 +5,209 @@ on:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
       - 'v[0-9]+.[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要发布的 tag（留空则使用当前 ref）。用于补发历史版本。'
+        required: false
+        default: ''
+
+# tag 推送时 contents: write 才能创建 Release；PR 上不需要。
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build-release:
-    name: Build Release Apk
-    runs-on: macos-latest
-    if: github.repository == 'aaa1115910/bv'
+    name: Build Release APK
+    runs-on: ubuntu-latest
+    # 不做仓库归属判断：这是 fork，推 tag 也要能出包。
+    # 上游用 `if: github.repository == 'aaa1115910/bv'` 把非上游仓库整个 job 跳过了。
+    # 现在改为「除上游 PR 外一律放行」——fork 自己推 tag 就能发版。
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request == null }}
 
     steps:
+      - name: Resolve tag
+        id: tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 手动触发时允许指定 tag；tag 推送时直接用 ref_name。
+          TAG="${{ github.event.inputs.tag }}"
+          if [[ -z "$TAG" ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          if [[ "$TAG" == "" || "$TAG" == "master" || "$TAG" == "main" ]]; then
+            echo "::error::无法确定要发布的 tag（当前为 '$TAG'）。请手动触发并填写 tag 输入。"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: master
+          # fetch-depth: 0 —— versionCode 来自 git rev-list --count，
+          # 浅克隆会算错 commit 数。release.yml 不能像上游那样写死 ref: master。
+          ref: ${{ steps.tag.outputs.tag }}
           fetch-depth: 0
-          submodules: 'true'
+          submodules: false
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v5
+      - name: Set up build
+        uses: ./.github/actions/setup-build
         with:
-          java-version: '21'
-          distribution: 'temurin'
+          variant: release
+          sign: 'true'
+          google-services: 'true'
 
-      - name: Write google-services.json
-        env:
-          DATA: ${{ secrets.GOOGLE_SERVICES_JSON }}
-        run: echo $DATA > app/google-services.json
-
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
-
-      - name: Add signing properties
-        env:
-          SIGNING_PROPERTIES: ${{ secrets.SIGNING_PROPERTIES }}
+      - name: Build APKs
+        # assembleDefaultRelease 会跑 R8 + baseline profile 合并，
+        # 首次冷构建在 GitHub runner 上通常 20-35 分钟。
+        timeout-minutes: 60
         run: |
-          echo ${{ secrets.SIGNING_PROPERTIES }} > encoded_signing_properties
-          base64 -Dd -i encoded_signing_properties > signing.properties
+          set -euo pipefail
+          ./gradlew \
+            assembleDefaultRelease \
+            assembleDefaultDebug \
+            --stacktrace \
+            --no-daemon
 
-      - name: Add jks file
+      - name: Collect APKs
+        id: collect
+        shell: bash
         run: |
-          echo ${{ secrets.SIGN_KEY }} > ./encoded_key
-          base64 -Dd -i encoded_key > key.jks
+          set -euo pipefail
 
-      - name: Build apk
-        run: ./gradlew assembleDefaultRelease assembleDefaultDebug
+          # 输出文件名由 app/build.gradle.kts 的 androidComponents 动态拼接：
+          #   BV_<code>_<name>.<buildType>_<flavor>_<abi>.apk
+          # 硬编码路径在版本号变化后会直接 404，所以改为按 glob 找。
+          shopt -s nullglob
+          release_apks=(app/build/outputs/apk/default/release/*.apk)
+          debug_apks=(app/build/outputs/apk/default/debug/*.apk)
 
-      - name: Read release apk output metadata
-        id: apk-meta-release
-        uses: juliangruber/read-file-action@v1
-        with:
-          path: app/build/outputs/apk/default/release/output-metadata.json
+          if [[ ${#release_apks[@]} -eq 0 ]]; then
+            echo "::error::没有找到 release APK。实际产物目录内容："
+            find app/build/outputs/apk -type f 2>/dev/null || echo "(apk 输出目录不存在)"
+            exit 1
+          fi
 
-      - name: Read debug apk output metadata
-        id: apk-meta-release-debug
-        uses: juliangruber/read-file-action@v1
-        with:
-          path: app/build/outputs/apk/default/debug/output-metadata.json
+          # debug 包是可选的：R8 或资源收缩失败时不应该连带 release 一起失败。
+          if [[ ${#debug_apks[@]} -eq 0 ]]; then
+            echo "::warning::没有找到 debug APK，本次只发布 release 包。"
+          fi
 
-      - name: Parse apk infos
-        id: apk-infos
-        run: |
-          echo "release_info_version_code=${{ fromJson(steps.apk-meta-release.outputs.content).elements[0].versionCode }}" >> $GITHUB_ENV
-          echo "release_info_version_name=${{ fromJson(steps.apk-meta-release.outputs.content).elements[0].versionName }}" >> $GITHUB_ENV
-          echo "release_debug_info_version_code=${{ fromJson(steps.apk-meta-release-debug.outputs.content).elements[0].versionCode }}" >> $GITHUB_ENV
-          echo "release_debug_info_version_name=${{ fromJson(steps.apk-meta-release-debug.outputs.content).elements[0].versionName }}" >> $GITHUB_ENV
-
-      - name: Get changelog
-        id: changelog
-        run: |
           {
-            echo "changelog<<EOF"
-            echo "$(git log --pretty=format:"- %s (%h)" ${{ github.event.before }}..${{ github.sha }})"
+            echo "release_apk=${release_apks[0]}"
+            echo "release_count=${#release_apks[@]}"
+          } >> "$GITHUB_OUTPUT"
+          if [[ ${#debug_apks[@]} -gt 0 ]]; then
+            echo "debug_apk=${debug_apks[0]}" >> "$GITHUB_OUTPUT"
+          fi
+
+          {
+            echo "release_files<<EOF"
+            printf '%s\n' "${release_apks[@]}"
+            if [[ ${#debug_apks[@]} -gt 0 ]]; then
+              printf '%s\n' "${debug_apks[@]}"
+            fi
             echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "产物清单："
+          ls -la app/build/outputs/apk/default/release/ app/build/outputs/apk/default/debug/ 2>/dev/null || true
+
+      - name: Read version metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          META="app/build/outputs/apk/default/release/output-metadata.json"
+          if [[ -f "$META" ]]; then
+            echo "version_code=$(jq -r '.elements[0].versionCode' "$META")" >> "$GITHUB_OUTPUT"
+            echo "version_name=$(jq -r '.elements[0].versionName' "$META")" >> "$GITHUB_OUTPUT"
+          else
+            # output-metadata.json 缺失不该阻断发版，退回用文件名解析。
+            BASE="$(basename "${{ steps.collect.outputs.release_apk }}" .apk)"
+            CODE="$(echo "$BASE" | cut -d_ -f2)"
+            echo "::warning::output-metadata.json 不存在，改从文件名解析版本：$BASE"
+            echo "version_code=$CODE" >> "$GITHUB_OUTPUT"
+            echo "version_name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build changelog
+        id: changelog
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 上游用 github.event.before，在手动补发和首次推送时会拿到空值，
+          # 这里改成"上一个 tag 到当前 tag"，任何触发方式都有内容。
+          PREV_TAG="$(git describe --tags --abbrev=0 "${{ steps.tag.outputs.tag }}^" 2>/dev/null || true)"
+          if [[ -n "$PREV_TAG" ]]; then
+            RANGE="$PREV_TAG..${{ steps.tag.outputs.tag }}"
+            echo "变更范围：$RANGE"
+          else
+            RANGE="${{ steps.tag.outputs.tag }}"
+            echo "::warning::找不到上一个 tag，列出该 tag 的全部提交。"
+          fi
+          {
+            echo "changelog<<BV_CHANGELOG_EOF"
+            git log --pretty=format:'- %s (%h)' "$RANGE"
+            echo ""
+            echo "BV_CHANGELOG_EOF"
           } >> "$GITHUB_ENV"
 
-      # upload artifacts release debug
+      # R8 mapping 是崩溃栈还原的唯一依据，缺失后线上崩溃基本无法定位。
+      # 用 shell 判断而不是 if: hashFiles(...) —— 后者在 step 级求值时
+      # 工作区文件尚未就绪，对目录内容判断不可靠。
+      - name: Archive mapping
+        shell: bash
+        run: |
+          set -euo pipefail
+          MAPPING_DIR="app/build/outputs/mapping/defaultRelease"
+          if [[ -d "$MAPPING_DIR" ]]; then
+            zip -rj mapping.zip "$MAPPING_DIR"
+            echo "mapping.zip 已打包：$(du -h mapping.zip | cut -f1)"
+          else
+            echo "::warning::没有生成 R8 mapping（release 通常会生成），跳过。"
+          fi
 
-      - name: Archive release debug build artifacts
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Release debug build artifact
-          path: app/build/outputs/apk/default/debug/BV_${{ env.release_debug_info_version_code }}_${{ env.release_debug_info_version_name }}_default_universal.apk
-
-      # upload artifacts release
-
-      - name: Archive release build mappings
-        uses: actions/upload-artifact@v4
-        with:
-          name: Release build mappings
-          path: app/build/outputs/mapping/defaultRelease
-
-      - name: Archive release build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: Release build artifact
-          path: app/build/outputs/apk/default/release/BV_${{ env.release_info_version_code }}_${{ env.release_info_version_name }}_default_universal.apk
-
-      # zip mapping because softprops/action-gh-release can't upload folder
-
-      - name: Zip mapping
-        run: zip -rj mapping.zip app/build/outputs/mapping/defaultRelease
-
-      # upload to github release
+          name: Release build artifacts
+          path: ${{ steps.collect.outputs.release_files }}
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            app/build/outputs/apk/default/debug/BV_${{ env.release_debug_info_version_code }}_${{ env.release_debug_info_version_name }}_default_universal.apk
-            app/build/outputs/apk/default/release/BV_${{ env.release_info_version_code }}_${{ env.release_info_version_name }}_default_universal.apk
+            ${{ steps.collect.outputs.release_files }}
             mapping.zip
-          tag_name: ${{ github.ref_name }}
-          name: ${{ env.release_info_version_name }}
-          prerelease: false
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: BV ${{ steps.meta.outputs.version_name }}
+          prerelease: ${{ contains(steps.tag.outputs.tag, '-') }}
           body: ${{ env.changelog }}
           target_commitish: ${{ github.sha }}
+          # mapping 是可选产物（上面已允许缺失），这里不能 fail_on_unmatched_files，
+          # 否则会在发布阶段才因 mapping.zip 缺失而整个 Release 失败。
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### Release 构建完成"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "| --- | --- |"
+            echo "| tag | \`${{ steps.tag.outputs.tag }}\` |"
+            echo "| versionCode | ${{ steps.meta.outputs.version_code }} |"
+            echo "| versionName | ${{ steps.meta.outputs.version_name }} |"
+            echo "| APK 数 | ${{ steps.collect.outputs.release_count }} |"
+            echo ""
+            echo "未配置签名的构建产物为 debug 签名，不能覆盖安装正式版。"
+          } >> "$GITHUB_STEP_SUMMARY"
