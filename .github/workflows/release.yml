@@ -61,6 +61,10 @@ jobs:
           variant: release
           sign: 'true'
           google-services: 'true'
+          # secrets 上下文只在 workflow 里可用，必须在这里展开后传给 composite action。
+          google-services-json: ${{ secrets.GOOGLE_SERVICES_JSON }}
+          signing-properties: ${{ secrets.SIGNING_PROPERTIES }}
+          sign-key: ${{ secrets.SIGN_KEY }}
 
       - name: Build APKs
         # assembleDefaultRelease 会跑 R8 + baseline profile 合并，

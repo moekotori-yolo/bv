@@ -53,6 +53,10 @@ jobs:
           # 手动打包允许不带签名（自测场景），缺 secret 时退回 debug 签名。
           sign: ${{ inputs.sign && 'true' || 'false' }}
           google-services: 'true'
+          # secrets 上下文只在 workflow 里可用，必须在这里展开后传给 composite action。
+          google-services-json: ${{ secrets.GOOGLE_SERVICES_JSON }}
+          signing-properties: ${{ secrets.SIGNING_PROPERTIES }}
+          sign-key: ${{ secrets.SIGN_KEY }}
 
       - name: Build signed release APK
         timeout-minutes: 60

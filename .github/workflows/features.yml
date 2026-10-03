@@ -42,6 +42,9 @@ jobs:
           # 让流水线直接失败反而挡掉正常的代码贡献。
           sign: 'false'
           google-services: 'true'
+          # 同为 fork 场景下的 PR，google-services.json 也可能不可用；
+          # setup-build 内部对空值是降级处理，不会中断构建。
+          google-services-json: ${{ secrets.GOOGLE_SERVICES_JSON }}
 
       - name: Build APKs
         timeout-minutes: 60

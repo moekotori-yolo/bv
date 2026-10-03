@@ -24,6 +24,21 @@ inputs:
       功能在无该文件时自动降级（AppConfiguration.isGoogleServicesAvailable）。
     required: false
     default: 'true'
+  # 注意：composite action 的 manifest 里没有 secrets / gradle 上下文，
+  # ${{ secrets.* }} 只能写在调用方 workflow 里。因此 secret 必须由调用方
+  # 通过下面这几个 input 显式传进来。
+  google-services-json:
+    description: 'google-services.json 的明文内容（通常来自 secrets.GOOGLE_SERVICES_JSON）'
+    required: false
+    default: ''
+  signing-properties:
+    description: 'signing.properties 的 base64 编码内容（通常来自 secrets.SIGNING_PROPERTIES）'
+    required: false
+    default: ''
+  sign-key:
+    description: 'key.jks 的 base64 编码内容（通常来自 secrets.SIGN_KEY）'
+    required: false
+    default: ''
 
 runs:
   using: composite
@@ -52,7 +67,7 @@ runs:
       env:
         # 用 printf 而不是 echo：JSON 里常有多行和以 - 开头的字段，
         # echo 在部分 shell 下会吞掉转义。
-        GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        GOOGLE_SERVICES_JSON: ${{ inputs.google-services-json }}
       run: |
         set -euo pipefail
         if [[ -z "${GOOGLE_SERVICES_JSON}" ]]; then
@@ -74,8 +89,8 @@ runs:
       if: inputs.sign == 'true'
       shell: bash
       env:
-        SIGNING_PROPERTIES: ${{ secrets.SIGNING_PROPERTIES }}
-        SIGN_KEY: ${{ secrets.SIGN_KEY }}
+        SIGNING_PROPERTIES: ${{ inputs.signing-properties }}
+        SIGN_KEY: ${{ inputs.sign-key }}
       run: |
         set -euo pipefail
 
@@ -174,9 +189,8 @@ runs:
       run: |
         set -euo pipefail
         java -version 2>&1 | head -n1
-        # setup-gradle 会把缓存命中情况写到 ~/.gradle/build-scan/ 与控制台摘要，
-        # 这里只打印构建身份信息，便于在 Actions 日志里对齐具体变体。
+        # composite action 内没有 gradle 上下文（gradle.cache-state 不可用），
+        # 缓存命中情况由 setup-gradle 自己写进 Actions Job Summary。
         echo "variant   : ${{ inputs.variant }}"
         echo "signing   : ${{ inputs.sign }}"
-        echo "gradle cache enabled: ${{ gradle.cache-enabled }}"
-        echo "cache-state (true=已命中): ${{ gradle.cache-state }}"
+        echo "g-services: ${{ inputs.google-services }}"
