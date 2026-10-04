@@ -17,12 +17,15 @@ import android.widget.FrameLayout
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -66,6 +69,7 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import dev.aaa1115910.bv.component.QrImage
 import dev.aaa1115910.bv.network.GeetestCompanionService
+import dev.aaa1115910.bv.network.LocalNetworkPermission
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -302,8 +306,13 @@ fun GeetestTvVerifyDialog(
         ) {
             Column(
                 modifier = Modifier
-                    .fillMaxWidth(0.55f)
-                    .widthIn(max = 720.dp)
+                    // 横向对 TV 不是瓶颈（面板只要 320 CSS px 宽），
+                    // 原先 0.55 偏保守；放宽以换取更高的可视区域。
+                    .fillMaxWidth(0.85f)
+                    .widthIn(max = 900.dp)
+                    // 不加滚动：TV 遥控器在可滚动容器里方向键会被滚动吃掉，
+                    // 而验证区需要独占焦点。改为给上限，内容用 weight 自适应。
+                    .heightIn(max = (screenHeightDp * 0.94f).dp)
                     .onSizeChanged { debugDialogHeightPx = it.height }
                     .clip(RoundedCornerShape(16.dp))
                     .background(MaterialTheme.colorScheme.surface)
@@ -331,23 +340,25 @@ fun GeetestTvVerifyDialog(
                     onBackFromModeTab = onDismiss,
                 )
 
-                Text(
-                    text = when {
-                        challengeRefreshing -> "正在获取新的验证码，当前验证仍可继续…"
-                        challengeRefreshError != null -> challengeRefreshError.orEmpty()
-                        else -> "验证区按返回 → 模式 Tab ｜ 模式上按确定 → 进入验证区 ｜ 模式上再返回关闭"
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 2.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (challengeRefreshError != null) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
-                    },
-                    textAlign = TextAlign.Center,
-                )
+                // 原先这里还有一行「验证区按返回 → 模式 Tab ｜ …」的操作提示。
+                // 面板在 320dp 视口下上下各被裁掉约 45px，这一行约 20dp 纯属浪费，
+                // 已删除；操作方式改为在验证区首次获得焦点时用 statusText 提示。
+                // challenge 刷新状态仍然需要显示，所以只保留有意义的两种文案。
+                if (challengeRefreshing || challengeRefreshError != null) {
+                    Text(
+                        text = challengeRefreshError ?: "正在获取新的验证码，当前验证仍可继续…",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 2.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (challengeRefreshError != null) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                        },
+                        textAlign = TextAlign.Center,
+                    )
+                }
 
                 // 点击与滑块由页面形式自动识别，只改变遥控器事件注入方式，不重新初始化 challenge。
                 key(mode == GeetestVerifyMode.PhoneCompanion, gt, challenge, mockMode) {
@@ -590,8 +601,28 @@ private fun GeetestPhoneCompanionContent(
     var statusText by remember { mutableStateOf("正在准备手机验证…") }
     var qrContent by remember { mutableStateOf("") }
     var sessionId by remember { mutableStateOf<String?>(null) }
+    var permissionGranted by remember { mutableStateOf(LocalNetworkPermission.isGranted(context)) }
 
-    LaunchedEffect(gt, challenge, mockMode) {
+    // Android 16+ 必须先拿到 ACCESS_LOCAL_NETWORK，否则本地 HTTP 服务无法监听
+    // 局域网地址，手机扫码后一直连不上（URL 里的 IP 与端口本身是对的）。
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        permissionGranted = granted
+        if (!granted) {
+            statusText = "未授予局域网访问权限，手机将无法连接本机"
+        }
+    }
+
+    // permissionGranted 变化时重跑：权限授予后要补建 session。
+    // gt/challenge/mockMode 同时作为 key：challenge 刷新后必须重建，否则二维码指向旧会话。
+    LaunchedEffect(permissionGranted, gt, challenge, mockMode) {
+        if (!permissionGranted) {
+            if (LocalNetworkPermission.isRequired()) {
+                permissionLauncher.launch(LocalNetworkPermission.permission)
+            }
+            return@LaunchedEffect
+        }
         statusText = "正在准备手机验证…"
         qrContent = ""
         sessionId?.let { GeetestCompanionService.removeSession(it) }
@@ -700,9 +731,11 @@ private fun GeetestPhoneCompanionContent(
                 )
             } else {
                 Text(
-                    text = "生成中…",
+                    text = if (permissionGranted) "生成中…" else "需要局域网访问权限",
                     color = Color.DarkGray,
                     style = MaterialTheme.typography.bodyMedium,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(horizontal = 12.dp),
                 )
             }
         }
@@ -747,6 +780,21 @@ private fun GeetestTvVerifyContent(
     val currentSliderMode = rememberUpdatedState(sliderMode)
     val currentOnTvModeDetected = rememberUpdatedState(onTvModeDetected)
     val currentOnResult = rememberUpdatedState(onResult)
+
+    // 探针实测的面板高度。探针只在 debugHud 开启时才注入页面，
+    // 正式流程下保持 0，视口高度走屏高估算分支。
+    var measuredPanelHeight by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(debugHud) {
+        if (!debugHud) {
+            measuredPanelHeight = 0f
+            onDebugMetrics(null)
+        }
+    }
+
+    // 视口高度按屏高自适应：原先写死 320dp，点选面板（320x410 CSS px）
+    // 居中后上下各裁 45px，顶部提示与底部「确定」按钮正好被裁掉。
+    val screenHeightDp = LocalConfiguration.current.screenHeightDp
+    val webViewHeight = computeGeetestViewportDp(screenHeightDp, measuredPanelHeight).dp
 
     var containerWidthPx by remember { mutableFloatStateOf(0f) }
     var containerHeightPx by remember { mutableFloatStateOf(0f) }
@@ -1010,13 +1058,13 @@ private fun GeetestTvVerifyContent(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
+                .height(webViewHeight)
                 .padding(horizontal = 12.dp)
                 .padding(bottom = 4.dp),
         ) {
             AndroidView(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(320.dp)
+                    .fillMaxSize()
                     .clip(RoundedCornerShape(8.dp)),
                 factory = { ctx ->
                     val webView = WebView(ctx).apply {
@@ -1098,8 +1146,13 @@ private fun GeetestTvVerifyContent(
                                 @JavascriptInterface
                                 fun onDebugMetrics(payload: String?) {
                                     // 面板尺寸是 0.5s 过渡出来的，探针会持续上报，这里只保留最后一次。
-                                    val parsed = parseGeetestPanelMetrics(payload) ?: return
-                                    callbackScope.launch { onDebugMetrics(parsed) }
+                                    val parsed = parseGeetestPanelMetrics(payload)
+                                    callbackScope.launch {
+                                        if (parsed != null) {
+                                            measuredPanelHeight = parsed.requiredHeightCssPx
+                                        }
+                                        onDebugMetrics(parsed)
+                                    }
                                 }
                             },
                             "Android"

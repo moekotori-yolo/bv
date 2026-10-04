@@ -79,6 +79,9 @@ class BVApp : Application() {
         }
         if (Prefs.blacklistUser) {
             R.string.blacklist_user_toast.toast(context)
+            // 被拉黑时直接 return，koin / Firebase / HttpServer 都不会初始化。
+            // 扫码验证页依赖 HttpServer，本机根本起不来服务 —— 这是预期行为
+            //（该用户不会进入任何需要验证码的流程），故此处不再单独启动服务。
             return
         }
         koinApplication = startKoin<BVKoinApp> {

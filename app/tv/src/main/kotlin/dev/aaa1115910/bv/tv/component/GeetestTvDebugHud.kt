@@ -122,6 +122,45 @@ internal fun parseGeetestPanelMetrics(raw: String?): GeetestPanelMetrics? {
 }
 
 /**
+ * 弹窗内除 WebView 外的固定开销（标题、模式 Tab、状态文案、内边距）。
+ * 用于把屏幕高度换算成 WebView 可用高度。
+ */
+private const val GEETEST_CHROME_RESERVE_DP = 200
+
+/** 视口高度下限：滑块面板 285px、旧的 320dp 行为，两者都要容得下。 */
+private const val GEETEST_MIN_VIEWPORT_DP = 320
+
+/** 视口高度上限：超过这个值面板也不会更大，只是浪费屏幕。 */
+private const val GEETEST_MAX_VIEWPORT_DP = 620
+
+/**
+ * 计算 WebView 的视口高度。
+ *
+ * 根因：原先硬编码 320dp，而 GeeTest v3 点选面板实测 320x410 CSS px，
+ * 居中在 320px 视口里上下各被裁掉约 45px —— 顶部提示文字与底部「确定」
+ * 按钮恰好落在被裁掉的区间里。
+ *
+ * @param screenHeightDp 屏幕高度（dp）
+ * @param measuredPanelHeightCssPx 页面内探针实测的面板高度。拿到就直接按它给足，
+ *        不再靠猜；v3 面板高宽比固定（slide 1.02518 / click 1.28125），
+ *        知道高度即等于知道尺寸。探针仅在 debugHud 开启时上报，
+ *        正式流程下走屏高估算这一分支。
+ */
+internal fun computeGeetestViewportDp(
+    screenHeightDp: Int,
+    measuredPanelHeightCssPx: Float = 0f,
+): Int {
+    // 面板高度是 CSS px；useWideViewPort=false 时 1 CSS px == 1 dp
+    // （HUD 的 cssPxToViewPx 已验证），因此可直接与 dp 余量比较。
+    val needed = if (measuredPanelHeightCssPx > 0f) {
+        (measuredPanelHeightCssPx + 24f).toInt()
+    } else {
+        screenHeightDp - GEETEST_CHROME_RESERVE_DP
+    }
+    return needed.coerceIn(GEETEST_MIN_VIEWPORT_DP, GEETEST_MAX_VIEWPORT_DP)
+}
+
+/**
  * 把指标渲染成 HUD 的多行文本。抽成纯函数是为了能直接断言裁切判定逻辑。
  */
 internal fun formatGeetestPanelMetrics(

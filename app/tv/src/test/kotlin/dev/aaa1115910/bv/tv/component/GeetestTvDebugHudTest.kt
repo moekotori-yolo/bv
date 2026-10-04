@@ -185,6 +185,38 @@ class GeetestTvDebugHudTest {
     }
 
     @Test
+    fun viewportGrowsOnTallScreensSoClickPanelFits() {
+        // 1080p mdpi TV：屏高 1080dp，减去 200dp chrome 后远大于点选面板 410px，
+        // 不再是原先写死的 320dp。
+        val height = computeGeetestViewportDp(screenHeightDp = 1080)
+        assertTrue(height >= 434, "视口应能容下 410px 面板，实际 $height")
+    }
+
+    @Test
+    fun viewportNeverDropsBelowLegacyMinimum() {
+        // 小屏也要保留原先 320dp 的行为，避免比修改前更差。
+        assertEquals(320, computeGeetestViewportDp(screenHeightDp = 320))
+        assertEquals(320, computeGeetestViewportDp(screenHeightDp = 200))
+    }
+
+    @Test
+    fun viewportIsCappedOnVeryTallScreens() {
+        // 4K mdpi 屏高 2160dp，不应无脑吃满。
+        assertEquals(620, computeGeetestViewportDp(screenHeightDp = 2160))
+    }
+
+    @Test
+    fun measuredPanelHeightDrivesViewportHeight() {
+        // 探针实测 410px 时：410 + 24 余量 = 434，
+        // 即使屏高不高也优先按实测给足。
+        assertEquals(434, computeGeetestViewportDp(screenHeightDp = 700, measuredPanelHeightCssPx = 410f))
+        // 滑块面板 285px 放得下旧下限
+        assertEquals(320, computeGeetestViewportDp(screenHeightDp = 700, measuredPanelHeightCssPx = 285f))
+        // 超上限时夹紧
+        assertEquals(620, computeGeetestViewportDp(screenHeightDp = 2160, measuredPanelHeightCssPx = 900f))
+    }
+
+    @Test
     fun probeTargetsPanelBoxNotTheFullScreenMask() {
         val js = buildGeetestDebugProbeJs()
         // document.querySelector('.geetest_panel') 会命中 position:fixed 的全视口遮罩，

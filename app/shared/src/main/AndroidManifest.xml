@@ -6,6 +6,16 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!--
+      Android 16+ (API 36) 起，targetSdk >= 36 的应用必须持有该运行时危险权限，
+      才能监听局域网地址（Geetest 手机扫码验证用的内网 HTTP 服务）。
+      缺失时 URL 里的 IP 与端口都正确、手机也在同网段，但 TV 端不会真正 bind，
+      表现为扫码后一直连不上。
+      neverForLocation：本权限只用于服务同网段设备，不用于推导地理位置。
+    -->
+    <uses-permission
+        android:name="android.permission.ACCESS_LOCAL_NETWORK"
+        android:usesPermissionFlags="neverForLocation" />
 
     <queries>
         <package android:name="tw.com.gamer.android.animad" />
