@@ -40,7 +40,11 @@ jobs:
           variant: debug
           # CI 不碰签名与 Firebase，避免 secret 缺失直接失败。
           sign: 'false'
-          google-services: 'false'
+          google-services: 'stub'
+          # debug 类型强制 applicationIdSuffix = ".debug"（app/build.gradle.kts:169），
+          # 占位配置的 package_name 必须带上后缀，否则插件会报
+          # "No matching client found for package name"。
+          stub-package: dev.aaa1115910.bv2.debug
 
       # 单元测试：app/tv 与 app/shared 是本次改动所在的两个模块，
       # 全量 testDebugUnitTest 会跑到其余模块，用 --tests 限定范围更快。

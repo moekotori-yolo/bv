@@ -20,10 +20,13 @@ inputs:
     default: 'true'
   google-services:
     description: >
-      是否需要还原 app/google-services.json。false 时跳过，Firebase 相关
-      功能在无该文件时自动降级（AppConfiguration.isGoogleServicesAvailable）。
+      how to handle app/google-services.json:
+        'secret'   - 从 google-services-json input 还原真实配置
+        'skip'     - 完全不碰该文件（仅当仓库里已存在它时可用）
+        'stub'     - 生成一份占位配置，让 google-services 插件在无凭据时也能构建
+      firebase 依赖占位配置会降级，但 plugin 本身不会因缺文件而失败。
     required: false
-    default: 'true'
+    default: 'secret'
   # 注意：composite action 的 manifest 里没有 secrets / gradle 上下文，
   # ${{ secrets.* }} 只能写在调用方 workflow 里。因此 secret 必须由调用方
   # 通过下面这几个 input 显式传进来。
@@ -31,6 +34,10 @@ inputs:
     description: 'google-services.json 的明文内容（通常来自 secrets.GOOGLE_SERVICES_JSON）'
     required: false
     default: ''
+  stub-package:
+    description: "google-services='stub' 时占位配置使用的 package_name"
+    required: false
+    default: 'dev.aaa1115910.bv2'
   signing-properties:
     description: 'signing.properties 的 base64 编码内容（通常来自 secrets.SIGNING_PROPERTIES）'
     required: false
@@ -64,7 +71,7 @@ runs:
         git submodule status || true
 
     - name: Restore google-services.json
-      if: inputs.google-services == 'true'
+      if: inputs.google-services == 'secret'
       shell: bash
       env:
         # 用 printf 而不是 echo：JSON 里常有多行和以 - 开头的字段，
@@ -73,10 +80,9 @@ runs:
       run: |
         set -euo pipefail
         if [[ -z "${GOOGLE_SERVICES_JSON}" ]]; then
-          echo "::warning::GOOGLE_SERVICES_JSON 未配置，跳过 Firebase 配置。"
-          echo "::warning::构建仍会继续，但 Crashlytics 上传与部分 Firebase 功能不可用。"
-          rm -f app/google-services.json
-          exit 0
+          echo "::error::google-services='secret' 但未提供 google-services-json。"
+          echo "::error::改用 'stub' 生成占位配置，或 'skip' 跳过。"
+          exit 1
         fi
         mkdir -p app
         printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
@@ -93,6 +99,80 @@ runs:
             echo "::error::GOOGLE_SERVICES_JSON 不是合法 JSON，可能复制时被截断。"
             exit 1
           fi
+        fi
+
+    # google-services 插件在 app/build.gradle.kts 里是无条件 apply 的，
+    # 文件缺失会直接报 "File google-services.json is missing"，无法构建。
+    # 占位配置让无凭据环境（CI、fork PR）也能编译通过：
+    # project_id / api key 都是占位值，Firebase 与 Crashlytics 会自动降级。
+    - name: Write stub google-services.json
+      if: inputs.google-services == 'stub'
+      shell: bash
+      env:
+        STUB_PACKAGE: ${{ inputs.stub-package }}
+      run: |
+        set -euo pipefail
+        PKG="${STUB_PACKAGE:-dev.aaa1115910.bv2}"
+        echo "::warning::使用占位 google-services.json，package_name=$PKG"
+        echo "::warning::Firebase 与 Crashlytics 上传不可用，仅供编译验证。"
+        mkdir -p app
+        # 整块 JSON 必须与 run: 保持相同缩进，否则 YAML 会认为 block scalar
+        # 提前结束（实测踩过）。先用引号 heredoc 原样写入，再用 sed 去缩进并替换包名。
+        cat > app/google-services.json <<'STUB_EOF'
+        {
+          "project_info": {
+            "project_number": "000000000000",
+            "project_id": "bv-stub",
+            "storage_bucket": "bv-stub.appspot.com"
+          },
+          "client": [
+            {
+              "client_info": {
+                "mobilesdk_app_id": "1:000000000000:android:0000000000000000000000",
+                "android_client_info": {
+                  "package_name": __STUB_PACKAGE__
+                }
+              },
+              "oauth_client": [],
+              "api_key": [
+                {
+                  "current_key": "AIzaSyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                }
+              ],
+              "services": {
+                "appinvite_service": {
+                  "other_platform_oauth_client": []
+                }
+              }
+            }
+          ],
+          "configuration_version": "1"
+        }
+        STUB_EOF
+        sed -i 's/^[[:space:]]*//; s/__STUB_PACKAGE__/"'"$PKG"'"/' app/google-services.json
+        if command -v jq >/dev/null 2>&1; then
+          if jq -e . app/google-services.json >/dev/null 2>&1; then
+            echo "stub_google_services=valid"
+          else
+            echo "::error::生成的占位 google-services.json 不是合法 JSON。"
+            cat app/google-services.json
+            exit 1
+          fi
+        else
+          echo "stub_google_services=written"
+        fi
+
+    - name: Skip google-services.json
+      if: inputs.google-services == 'skip'
+      shell: bash
+      run: |
+        set -euo pipefail
+        # 仅当仓库里本来就有该文件时才可行（例如开发者本地已放置）。
+        if [[ -f app/google-services.json ]]; then
+          echo "google_services=skip_but_present"
+        else
+          echo "::warning::google-services='skip' 且文件不存在。"
+          echo "::warning::google-services 插件仍会应用并因缺文件失败，建议改用 'stub'。"
         fi
 
     # signing.properties 与 key.jks 都按 base64 存放。

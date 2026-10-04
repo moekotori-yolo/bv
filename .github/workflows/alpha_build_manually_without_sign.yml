@@ -49,7 +49,7 @@ jobs:
           variant: alpha
           # 这个 workflow 的意义就是免签名，明确不还原签名材料。
           sign: 'false'
-          google-services: 'true'
+          google-services: 'secret'
           # secrets 上下文只在 workflow 里可用，必须在这里展开后传给 composite action。
           google-services-json: ${{ secrets.GOOGLE_SERVICES_JSON }}
 
