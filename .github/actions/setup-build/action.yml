@@ -112,54 +112,60 @@ runs:
         STUB_PACKAGE: ${{ inputs.stub-package }}
       run: |
         set -euo pipefail
-        PKG="${STUB_PACKAGE:-dev.aaa1115910.bv2}"
-        echo "::warning::使用占位 google-services.json，package_name=$PKG"
-        echo "::warning::Firebase 与 Crashlytics 上传不可用，仅供编译验证。"
+        PKGS="${STUB_PACKAGE:-dev.aaa1115910.bv2}"
+        echo "::warning::stub google-services.json, packages=$PKGS"
+        echo "::warning::Firebase / Crashlytics uploads disabled; compile-check only."
         mkdir -p app
-        # 整块 JSON 必须与 run: 保持相同缩进，否则 YAML 会认为 block scalar
-        # 提前结束（实测踩过）。先用引号 heredoc 原样写入，再用 sed 去缩进并替换包名。
-        cat > app/google-services.json <<'STUB_EOF'
-        {
-          "project_info": {
-            "project_number": "000000000000",
-            "project_id": "bv-stub",
-            "storage_bucket": "bv-stub.appspot.com"
-          },
-          "client": [
-            {
-              "client_info": {
-                "mobilesdk_app_id": "1:000000000000:android:0000000000000000000000",
-                "android_client_info": {
-                  "package_name": __STUB_PACKAGE__
-                }
-              },
-              "oauth_client": [],
-              "api_key": [
-                {
-                  "current_key": "AIzaSyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-                }
-              ],
-              "services": {
-                "appinvite_service": {
-                  "other_platform_oauth_client": []
-                }
-              }
-            }
-          ],
-          "configuration_version": "1"
-        }
-        STUB_EOF
-        sed -i 's/^[[:space:]]*//; s/__STUB_PACKAGE__/"'"$PKG"'"/' app/google-services.json
-        if command -v jq >/dev/null 2>&1; then
-          if jq -e . app/google-services.json >/dev/null 2>&1; then
-            echo "stub_google_services=valid"
+
+        # 用 jq 构造而非 heredoc：heredoc 在 YAML block scalar 里必须与 run:
+        # 保持相同缩进，一行错位就会让整个 action.yml 解析失败（实测踩过）。
+        # jq 同时天然支持多个包名 —— google-services 插件按 applicationId
+        # 查条目，CI 会同时编译 debug（.debug 后缀）与 release（无后缀），
+        # 两者都需要在配置里登记。
+        CLIENTS=""
+        FIRST=1
+        IFS=',' read -ra PKG_LIST <<< "$PKGS"
+        for p in "${PKG_LIST[@]}"; do
+          p="$(echo "$p" | tr -d '[:space:]')"
+          [[ -z "$p" ]] && continue
+          ENTRY=$(jq -n --arg pkg "$p" '{
+            client_info: {
+              mobilesdk_app_id: "1:000000000000:android:0000000000000000000000",
+              android_client_info: { package_name: $pkg }
+            },
+            oauth_client: [],
+            api_key: [{ current_key: "AIzaSyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" }],
+            services: { appinvite_service: { other_platform_oauth_client: [] } }
+          }')
+          if [[ $FIRST -eq 1 ]]; then
+            CLIENTS="$ENTRY"
+            FIRST=0
           else
-            echo "::error::生成的占位 google-services.json 不是合法 JSON。"
-            cat app/google-services.json
-            exit 1
+            CLIENTS="$CLIENTS, $ENTRY"
           fi
+        done
+
+        if [[ $FIRST -eq 1 ]]; then
+          echo "::error::stub-package 为空，无法生成占位配置。"
+          exit 1
+        fi
+
+        jq -n --argjson clients "[$CLIENTS]" '{
+          project_info: {
+            project_number: "000000000000",
+            project_id: "bv-stub",
+            storage_bucket: "bv-stub.appspot.com"
+          },
+          client: $clients,
+          configuration_version: "1"
+        }' > app/google-services.json
+
+        if command -v jq >/dev/null 2>&1; then
+          echo "stub_google_services=valid"
+          echo "stub_packages=$(jq -r '[.client[].client_info.android_client_info.package_name] | join(",")' app/google-services.json)"
         else
-          echo "stub_google_services=written"
+          echo "::error::需要 jq 才能生成占位 google-services.json。"
+          exit 1
         fi
 
     - name: Skip google-services.json

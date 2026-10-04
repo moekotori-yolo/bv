@@ -56,7 +56,8 @@ jobs:
           google-services: 'stub'
           # 占位配置的 package_name 必须与实际 applicationId 一致，
           # 否则 google-services 插件同样报 "No matching client found"。
-          stub-package: ${{ env.BV_APPLICATION_ID }}
+          # alpha 变体无 applicationIdSuffix，这里同时带上 debug 后缀以防万一。
+          stub-package: ${{ env.BV_APPLICATION_ID }},${{ env.BV_APPLICATION_ID }}.debug
 
       - name: Build APKs
         timeout-minutes: 60
