@@ -20,7 +20,7 @@ data class AutoUpdateInfo(
 )
 
 object AutoUpdateApi {
-    const val GITHUB_RELEASE_PAGE_URL = "https://github.com/leonwu85/bv/releases/latest"
+    const val GITHUB_RELEASE_PAGE_URL = "https://github.com/moekotori-yolo/bv/releases/latest"
     private const val RELEASE_TEXT_URL =
         "https://pub-9b9e14b498254ce7a2724c093e3554de.r2.dev/release.txt"
 

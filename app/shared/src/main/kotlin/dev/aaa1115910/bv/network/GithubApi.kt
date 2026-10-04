@@ -35,10 +35,10 @@ class GithubRateLimitException(message: String) :
     NonReportableException
 
 object GithubApi {
-    const val RELEASES_URL = "https://github.com/leonwu85/bv/releases"
+    const val RELEASES_URL = "https://github.com/moekotori-yolo/bv/releases"
 
     private var endPoint = "api.github.com"
-    private const val OWNER = "leonwu85"
+    private const val OWNER = "moekotori-yolo"
     private const val REPO = "bv"
     private const val PROXY_URL = "https://ghfast.top/"
     private lateinit var client: HttpClient

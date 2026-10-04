@@ -602,23 +602,32 @@ private fun GeetestPhoneCompanionContent(
     var qrContent by remember { mutableStateOf("") }
     var sessionId by remember { mutableStateOf<String?>(null) }
     var permissionGranted by remember { mutableStateOf(LocalNetworkPermission.isGranted(context)) }
+    // 权限弹窗在部分 TV ROM 上不出现（无 GMS、无标准权限对话框），
+    // permissionRequested 防止 LaunchedEffect 反复重试刷屏；用户可手动重试。
+    var permissionRequested by remember { mutableStateOf(false) }
+    var permissionRetryToken by remember { mutableIntStateOf(0) }
+    val retryFocusRequester = remember { FocusRequester() }
 
     // Android 16+ 必须先拿到 ACCESS_LOCAL_NETWORK，否则本地 HTTP 服务无法监听
     // 局域网地址，手机扫码后一直连不上（URL 里的 IP 与端口本身是对的）。
+    // 缺权限时系统是静默丢包：不抛异常、不打日志，只有超时。
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         permissionGranted = granted
+        permissionRetryToken++
         if (!granted) {
             statusText = "未授予局域网访问权限，手机将无法连接本机"
         }
     }
 
-    // permissionGranted 变化时重跑：权限授予后要补建 session。
-    // gt/challenge/mockMode 同时作为 key：challenge 刷新后必须重建，否则二维码指向旧会话。
-    LaunchedEffect(permissionGranted, gt, challenge, mockMode) {
+    // permissionGranted / permissionRetryToken 变化时重跑：授权后补建 session，
+    // 用户手动重试时也重跑。gt/challenge/mockMode 同时作为 key：
+    // challenge 刷新后必须重建，否则二维码指向旧会话。
+    LaunchedEffect(permissionGranted, permissionRetryToken, gt, challenge, mockMode) {
         if (!permissionGranted) {
-            if (LocalNetworkPermission.isRequired()) {
+            if (LocalNetworkPermission.isRequired() && !permissionRequested) {
+                permissionRequested = true
                 permissionLauncher.launch(LocalNetworkPermission.permission)
             }
             return@LaunchedEffect
@@ -709,6 +718,58 @@ private fun GeetestPhoneCompanionContent(
             color = MaterialTheme.colorScheme.onSurface,
             textAlign = TextAlign.Center,
         )
+
+        // 权限状态自证行：缺权限时系统静默丢包，界面必须能看出卡在哪一步，
+        // 否则只能靠 adb appops 才能定位。
+        if (!permissionGranted && LocalNetworkPermission.isRequired()) {
+            Text(
+                text = "⚠ 缺少局域网权限，手机必然连不上。可用 adb 授权：\n" +
+                    "adb shell pm grant ${context.packageName} ${LocalNetworkPermission.permission}",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 10.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error,
+                textAlign = TextAlign.Center,
+            )
+            // TV 端没有点击，只能用焦点+确定键，因此用可聚焦的 Surface。
+            var retryFocused by remember { mutableStateOf(false) }
+            Surface(
+                onClick = {
+                    permissionRequested = false
+                    permissionRetryToken++
+                },
+                modifier = Modifier
+                    .padding(vertical = 6.dp)
+                    .onFocusChanged { retryFocused = it.isFocused }
+                    .focusRequester(retryFocusRequester)
+                    .focusable(),
+                shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(20.dp)),
+                colors = ClickableSurfaceDefaults.colors(
+                    containerColor = if (retryFocused) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                    },
+                    focusedContainerColor = MaterialTheme.colorScheme.primary,
+                    pressedContainerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                    focusedContentColor = MaterialTheme.colorScheme.onPrimary,
+                    pressedContentColor = MaterialTheme.colorScheme.onPrimary,
+                ),
+            ) {
+                Text(
+                    text = "重新申请权限",
+                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (retryFocused) {
+                        MaterialTheme.colorScheme.onPrimary
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                )
+            }
+        }
 
         Box(
             modifier = Modifier
