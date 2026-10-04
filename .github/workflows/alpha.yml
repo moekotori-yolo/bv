@@ -41,7 +41,7 @@ jobs:
           submodules: false
 
       - name: Set up build
-        uses: moekotori-yolo/bv/.github/actions/setup-build@feature-customisation-0001
+        uses: ./.github/actions/setup-build
         with:
           variant: alpha
           sign: 'true'

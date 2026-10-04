@@ -41,6 +41,8 @@ inputs:
     default: ''
 
 runs:
+  # LOCAL_REF_PROBE_V2: 该标记用于验证本地 action 是否拿到最新版本。
+  # 若 CI 日志出现此行，说明 uses: ./ 形式在同一次提交内可正确解析。
   using: composite
   steps:
     - name: Grant execute permission for gradlew
@@ -250,6 +252,9 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        # LOCAL_REF_PROBE_V2 —— 该行会出现在 CI 日志里。
+        # 若看不到，说明 uses: ./ 形式的本地 action 拿到了旧版本（GitHub 缓存）。
+        echo "LOCAL_REF_PROBE_V2 active"
         java -version 2>&1 | head -n1
         # composite action 内没有 gradle 上下文（gradle.cache-state 不可用），
         # 缓存命中情况由 setup-gradle 自己写进 Actions Job Summary。

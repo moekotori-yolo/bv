@@ -44,7 +44,7 @@ jobs:
           submodules: false
 
       - name: Set up build
-        uses: moekotori-yolo/bv/.github/actions/setup-build@feature-customisation-0001
+        uses: ./.github/actions/setup-build
         with:
           variant: alpha
           # 这个 workflow 的意义就是免签名，明确不还原签名材料。

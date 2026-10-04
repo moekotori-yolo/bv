@@ -35,7 +35,7 @@ jobs:
           submodules: false
 
       - name: Set up build
-        uses: moekotori-yolo/bv/.github/actions/setup-build@feature-customisation-0001
+        uses: ./.github/actions/setup-build
         with:
           variant: debug
           # CI 不碰签名与 Firebase，避免 secret 缺失直接失败。
